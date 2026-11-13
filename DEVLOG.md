@@ -4,6 +4,27 @@
 
 ---
 
+## 2026-11-13 · 安卓 APK 首次构建并发布（无代码改动）
+
+**做了什么**
+- 用户完成 `gh auth refresh -s workflow` 授权后，把 `.github/workflows/android.yml` 推上远端。Actions 首次构建一次通过（run 43458671541），`LedgerLens-android.apk`（约 0.5 MB，调试签名）已附到 v1.3.0 的 Release。
+- Release 说明的“下载”表格改为两个平台都可下载；`README.md` 去掉“尚未构建”。
+
+**怎么推送含 workflow 的提交**：本机 git 的凭据助手是 Git Credential Manager，它的令牌没有 `workflow` 权限；`gh` 的令牌有。推送时临时改用 gh 的凭据，不改全局配置：
+`git -c credential.helper= -c credential.helper='!gh auth git-credential' push origin main`
+（不涉及 workflow 文件的普通推送两种凭据都行。之前的 cherry-pick 绕行办法不再需要，本地与远端 `main` 已一致。）
+
+**以后怎么出 APK**：推送到 `main` 且改动了 `android/` 或 `app/web/mobile/`，或推送 `v*` 标签，或在 Actions 页手动触发，都会构建并附到最新的 Release。发新版时先 `gh release create`，再确认 APK 也附上了（`gh release view <tag> --json assets`）；如果只改了桌面端代码，需要手动触发一次：`gh workflow run android.yml`。
+
+**验证**：下载 Release 里的 APK 解包检查——含 `classes.dex`、`AndroidManifest.xml`，`assets/www/` 下有 `index.html` `m.js` `m.css` `i18n.js` `echarts.min.js` `icon.png`，`m.js` 是含货币切换的最新版。
+**没有验证**：没有在真机或模拟器上安装运行过；扫码配对、深链 `ledgerlens://pair`、离线缓存在 App 里都未实测。
+
+**遗留**
+- APK 是调试签名（签名密钥由 workflow 缓存复用，缓存失效后新版本将无法覆盖安装旧版本，需卸载重装）。
+- 其余同 v1.3.0。
+
+---
+
 ## 2026-11-13 · 发布页标注平台（无代码改动）
 
 **做了什么**：v1.3.0 的 Release 说明改成“下载”表格，分别标注 Windows（`LedgerLens-windows.exe`，可下载）和安卓（`LedgerLens-android.apk`，尚未构建）；`README.md` 的下载表同样注明 APK 暂未提供。

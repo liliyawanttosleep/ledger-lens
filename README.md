@@ -9,7 +9,7 @@
 | 文件 | 说明 |
 |---|---|
 | `LedgerLens-windows.exe` | Windows 10 / 11，单文件，双击即用，无需安装 Python |
-| `LedgerLens-android.apk` | 安卓 7.0 及以上（需允许“安装未知来源应用”）。**尚未构建，Release 里暂时没有这个文件**；目前请用手机浏览器扫码使用 |
+| `LedgerLens-android.apk` | 安卓 7.0 及以上（需允许“安装未知来源应用”）。调试签名，尚未在真机上测试 |
 
 ## 功能
 
