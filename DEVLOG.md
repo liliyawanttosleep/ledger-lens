@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-11-13 · 发布页标注平台（无代码改动）
+
+**做了什么**：v1.3.0 的 Release 说明改成“下载”表格，分别标注 Windows（`LedgerLens-windows.exe`，可下载）和安卓（`LedgerLens-android.apk`，尚未构建）；`README.md` 的下载表同样注明 APK 暂未提供。
+
+**为什么**：用户问安卓版是否已上传。实际情况：安卓源码（`android/`）在仓库里，但 APK 从未构建，Release 里只有 exe，而 README 之前写得像是可以下载。
+
+**遗留（阻塞中）**
+- APK 仍未构建。`gh` 令牌的权限是 `gist, read:org, repo`，没有 `workflow`，所以含 `.github/workflows/android.yml` 的提交推不上去（本地 `main` 领先远端 1 个提交）。本机没有 JDK / Android SDK，也无法本地构建。
+- 解除办法：用户运行 `gh auth refresh -h github.com -s workflow` 并在浏览器里完成确认 → `git push origin main` → Actions 构建并把 APK 附到最新 Release → 把 Release 说明和 README 里“尚未构建”的字样改掉。安卓工程从未编译过，首次构建可能要修错。
+- 以后每次发版：Release 说明沿用这个“下载”表格。
+
+---
+
 ## 2026-11-13 · v1.3.0 — 通用的内部转账识别、多货币、合并报告
 
 **做了什么**
