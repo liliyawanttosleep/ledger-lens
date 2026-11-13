@@ -38,6 +38,8 @@ def init():
         cols = {r[1] for r in c.execute("PRAGMA table_info(transactions)")}
         if "card" not in cols:
             c.execute("ALTER TABLE transactions ADD COLUMN card TEXT DEFAULT ''")
+        if "locked" not in cols:  # 用户手动改过类型的交易，自动识别不再改动
+            c.execute("ALTER TABLE transactions ADD COLUMN locked INTEGER DEFAULT 0")
 
 
 def txn_hash(t: dict, seq: int = 0) -> str:
@@ -93,7 +95,7 @@ def all_transactions(currency=None):
 
 
 def update_transaction(tid, fields: dict):
-    allowed = {k: v for k, v in fields.items() if k in ("date", "amount", "kind", "category", "desc", "account", "card")}
+    allowed = {k: v for k, v in fields.items() if k in ("date", "amount", "kind", "category", "desc", "account", "card", "locked")}
     if not allowed:
         return
     sets = ", ".join(f"{k}=?" for k in allowed)

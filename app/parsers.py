@@ -67,6 +67,9 @@ _SEC_EXPENSE = re.compile(
 _CREDIT_CARD = re.compile(
     r"信用卡对账单|信用卡账单|信用卡电子账单|贷记卡|最低还款|本期应还|信用额度|minimum payment|credit limit|"
     r"new balance|credit line|cardmember|card member", re.I)
+# 只有信用卡账单才会出现的“收到还款”字样
+_CARD_PAYMENT = re.compile(r"payment from chk|payment from sav|payment thank you|payment received|"
+                           r"internet payment - thank|autopay payment", re.I)
 _PAYSLIP = re.compile(r"实发|工资条|工资单|薪资单|\bnet pay|pay stub|paystub|earnings statement", re.I)
 _PAY_KEYS = ["实发工资", "实发金额", "实发合计", "实发薪资", "实发", "net pay", "net amount", "take home",
              "到账金额", "入账金额", "收款金额", "转账金额", "交易金额", "金额", "amount", "total"]
@@ -79,7 +82,7 @@ ACCOUNTS = [
     ("邮储银行", ["邮政储蓄", "邮储"]), ("中信银行", ["中信银行"]), ("光大银行", ["光大银行"]),
     ("民生银行", ["民生银行"]), ("浦发银行", ["浦发", "浦东发展"]), ("兴业银行", ["兴业银行"]),
     ("平安银行", ["平安银行"]), ("广发银行", ["广发银行"]), ("华夏银行", ["华夏银行"]),
-    ("Chase", ["chase", "jpmorgan"]), ("Bank of America", ["bank of america", "bofa"]),
+    ("Chase", ["chase", "jpmorgan"]), ("Bank of America", ["bank of america", "bofa", "boa ", "boa_", "boa-"]),
     ("Wells Fargo", ["wells fargo"]), ("Citi", ["citibank", "citi "]),
     ("Capital One", ["capital one"]), ("Discover", ["discover"]),
     ("American Express", ["american express", "amex"]), ("PNC", ["pnc bank", "pnc "]),
@@ -254,11 +257,11 @@ class Ctx:
             return None
 
 
-def guess_account(text: str, filename: str) -> str:
-    name = filename.lower()
-    for acc, keys in ACCOUNTS:
-        if any(k in name for k in keys):
-            return acc
+def guess_account(text: str, filename: str, folder: str = "") -> str:
+    for name in (filename.lower(), folder.lower() + " "):
+        for acc, keys in ACCOUNTS:
+            if any(k in name for k in keys):
+                return acc
     head = text[:3000].lower()
     best = None
     for acc, keys in ACCOUNTS:
@@ -311,6 +314,10 @@ _CARD_PATTERNS = [
 
 def guess_card(text: str, filename: str, credit_card: bool) -> str:
     """从文件名或账单抬头里找卡号后四位，例如“尾号1234”。找不到返回空串。"""
+    # 文件名里常带卡号后四位：statements-4064-.pdf、October2026_9838.csv（排除年份）
+    m = re.search(r"[_\-](?!(?:19|20)\d\d(?!\d))(\d{4})(?=[_\-.]|$)", filename)
+    if m:
+        return ("信用卡" if credit_card else "") + "尾号" + m[1]
     for src in (filename, text[:2500]):
         for rx in _CARD_PATTERNS:
             m = rx.search(src)
@@ -992,7 +999,8 @@ def parse_file(path: str, mode: str = "auto", password: str | None = None) -> di
     grid_text = "\n".join("  ".join(str(c) for c in r if c is not None) for g in grids for r in g[:400])
     full_text = "\n".join(lines + ocr_lines) + "\n" + grid_text
     ctx.set_text(full_text)
-    credit_card = bool(_CREDIT_CARD.search(full_text[:6000]) or _CREDIT_CARD.search(name))
+    credit_card = bool(_CREDIT_CARD.search(full_text[:6000]) or _CREDIT_CARD.search(name)
+                       or _CARD_PAYMENT.search(full_text))
 
     if not txns:
         t_grid, cur = parse_grids(grids, ctx) if grids else ([], None)
@@ -1030,7 +1038,8 @@ def parse_file(path: str, mode: str = "auto", password: str | None = None) -> di
         t["card"] = t.get("card") or card
     return {
         "file": name, "path": path, "method": method, "card": card,
-        "account": guess_account(full_text, name),
+        "account": guess_account("" if method.startswith(("CSV", "Excel")) else full_text, name,
+                                 os.path.basename(os.path.dirname(path))),
         "currency": currency or guess_currency(full_text),
         "credit_card": credit_card, "txns": txns, "warnings": warnings,
     }

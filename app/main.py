@@ -20,6 +20,7 @@ from categorize import (EXPENSE_CATEGORIES, INCOME_CATEGORIES, TRANSFER_CATEGORY
                         rule_key)
 
 import sync_server  # noqa: E402
+import transfers  # noqa: E402
 
 APP_NAME = "流水分析助手"
 REPO_URL = "https://github.com/liliyawanttosleep/ledger-lens"
@@ -39,11 +40,16 @@ def _dialog(kind):
     return getattr(webview, f"{kind}_DIALOG")
 
 
-def _enrich(txns, account, currency, learned):
+def _enrich(txns, account, currency, learned, credit_card=False):
+    names = transfers.owner_names() + transfers.learn_owner(t.get("desc", "") for t in txns)
     for t in txns:
         t["account"] = account
         t["currency"] = currency
+        if t["kind"] != "transfer" and transfers.is_self(t.get("desc", ""), names):
+            t["kind"] = "transfer"  # 对方是本人：自己账户间互转
         t["category"] = categorize(t.get("desc", ""), t["kind"], learned)
+        if credit_card and t["kind"] == "income" and t["category"] in ("其他收入", "转账收入"):
+            t["category"] = "退款报销"  # 信用卡上的入账只可能是退款 / 返现
     store.assign_hashes(txns)
     have = store.existing_hashes({t["hash"] for t in txns})
     for t in txns:
@@ -93,7 +99,7 @@ class Api:
         except Exception as e:  # 任何单个文件失败都不能影响其他文件
             traceback.print_exc()
             return {"file": name, "path": path, "error": f"无法解析：{e}"}
-        _enrich(res["txns"], res["account"], res["currency"], store.learned_rules())
+        _enrich(res["txns"], res["account"], res["currency"], store.learned_rules(), res.get("credit_card"))
         res["mode"] = mode
         return res
 
@@ -117,7 +123,7 @@ class Api:
             return {"count": 0}
         store.assign_hashes(txns)
         store.add_import(batch.get("file", "手动添加"), batch.get("account", ""), batch.get("method", ""), txns)
-        return {"count": len(txns), "months": sorted({t["date"][:7] for t in txns}),
+        return {"count": len(txns), "transfers": transfers.reclassify(), "months": sorted({t["date"][:7] for t in txns}),
                 "currency": txns[0]["currency"]}
 
     # ---------- 查询 ----------
@@ -135,6 +141,8 @@ class Api:
         if "amount" in fields:
             fields["amount"] = round(abs(float(fields["amount"])), 2)
         kind = fields.get("kind", old["kind"])
+        if "kind" in fields and fields["kind"] != old["kind"]:
+            fields["locked"] = 1
         if "kind" in fields and fields["kind"] != old["kind"] and "category" not in fields:
             fields["category"] = categorize(old["desc"], kind, store.learned_rules())
         if kind == "transfer":
@@ -158,6 +166,17 @@ class Api:
     def clear_all(self):
         store.clear_all()
         return True
+
+    # ---------- 内部转账识别 ----------
+    def get_owner_names(self):
+        return store.get_setting("owner_names", "") or ""
+
+    def set_owner_names(self, text):
+        transfers.set_owner_names(text)
+        return {"names": self.get_owner_names(), "transfers": transfers.reclassify()}
+
+    def reclassify_transfers(self):
+        return {"names": self.get_owner_names(), "transfers": transfers.reclassify()}
 
     # ---------- 手机同步 ----------
     def sync_status(self):
@@ -354,6 +373,10 @@ def main():
         args = sys.argv[sys.argv.index("--selftest") + 1:]
         return _selftest(args[:-1], args[-1])
     store.init()
+    try:  # 升级后对已有数据补做一次内部转账识别
+        transfers.reclassify()
+    except Exception:
+        traceback.print_exc()
     if store.get_setting("sync_enabled", "0") == "1":
         sync_server.start(os.path.join(BASE, "web"), _on_push)
     window = webview.create_window(

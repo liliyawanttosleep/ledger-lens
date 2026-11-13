@@ -352,13 +352,16 @@ function editTxn(t) {
 function dropHtml() { return `<div class="drop" data-import>${icon('inbox')}<b>点击选择文件，或直接把文件拖进窗口</b><span>支持 PDF、截图 / 照片、Excel、CSV、Word、OFX —— 可一次选多个银行的流水</span></div>
   <div class="income-entry" data-income>${icon('plus')}<div><b>导入收入凭证</b><span>工资条、到账截图、收入证明 PDF 等 —— 图片会自动识别金额和日期，导入前可核对修改</span></div></div>`; }
 async function pageImports() {
-  const list = await api.list_imports();
+  const list = await api.list_imports(), owner = await api.get_owner_names();
   const html = `<div class="card" style="margin-bottom:18px">${dropHtml()}</div>
   <div class="card" style="margin-bottom:18px"><div class="card-h"><h3>导入记录</h3><span>删除某次导入会一并移除它带来的交易</span></div>
     <table class="tbl"><thead><tr><th>文件</th><th>账户</th><th>识别方式</th><th>覆盖日期</th><th class="r">交易数</th><th>导入时间</th><th></th></tr></thead><tbody>
     ${list.map(i => `<tr data-id="${i.id}"><td class="desc" style="max-width:260px" title="${esc(i.filename)}">${esc(i.filename)}</td><td>${esc(i.account)}</td><td class="muted">${esc(i.method)}</td><td class="num muted">${i.first_date ? i.first_date + ' ~ ' + i.last_date.slice(5) : '—'}</td><td class="r num">${i.remaining}</td><td class="num muted">${i.imported_at}</td><td class="r"><button class="icon-btn" title="删除这次导入">${icon('trash')}</button></td></tr>`).join('') || '<tr><td colspan="7" class="note">还没有导入过文件</td></tr>'}</tbody></table></div>
   <div class="card"><div class="card-h"><h3>数据管理</h3><span>所有数据只保存在这台电脑上，不会上传</span></div>
-    <div class="toolbar" style="margin:0"><button class="btn" id="exportBtn">${icon('download')}导出 Excel 报告</button><button class="btn" id="demoBtn">载入示例数据</button><button class="btn danger" id="clearBtn">${icon('trash')}清空全部数据</button></div></div>`;
+    <div class="toolbar" style="margin:0"><button class="btn" id="exportBtn">${icon('download')}导出 Excel 报告</button><button class="btn" id="demoBtn">载入示例数据</button><button class="btn danger" id="clearBtn">${icon('trash')}清空全部数据</button></div></div>
+  <div class="card" style="margin-top:18px"><div class="card-h"><h3>内部转账识别</h3><span>信用卡还款、自己账户之间互转不算收入也不算开销</span></div>
+    <p style="color:var(--ink-2);font-size:13.5px;margin-bottom:12px;user-select:text">程序会自动识别三类记录并标为“内部转账”：① 账单里的还款 / 转账字样（如 Payment Thank You、Payment from CHK、Ext Trnsfr、信用卡还款）；② 对方是你本人的转账（如 Zelle payment to 你的名字）；③ 两个账户之间金额相同、日期相近的一出一进。你手动改过类型的交易不会被再次改动。</p>
+    <div class="toolbar" style="margin:0"><input class="input grow" id="ownerNames" value="${esc(owner)}" placeholder="你在银行账单上的姓名，多个用逗号分隔，例如：Zhang San, 张三"><button class="btn" id="ownerSave">保存并重新识别</button></div></div>`;
   return { html, draw() {
     $$('#content tr[data-id] .icon-btn').forEach(b => b.onclick = async () => {
       if (!await confirmBox('删除这次导入？', '这次导入带来的所有交易都会被移除。', '删除')) return;
@@ -366,6 +369,7 @@ async function pageImports() {
     });
     $('#exportBtn').onclick = async () => { if (!S.currency) return toast('还没有数据可导出'); const p = await api.export_excel(S.currency); if (p) toast('已导出：' + p); };
     $('#demoBtn').onclick = loadDemo;
+    $('#ownerSave').onclick = async () => { const r = await api.set_owner_names($('#ownerNames').value); toast(r.transfers ? `新识别出 ${r.transfers} 笔内部转账` : '已保存，没有发现新的内部转账'); await reload(); };
     $('#clearBtn').onclick = async () => { if (!await confirmBox('清空全部数据？', '所有交易和导入记录都会被删除，且无法恢复。', '清空')) return; await api.clear_all(); toast('已清空'); await reload(); };
   } };
 }
@@ -471,14 +475,14 @@ function bindImport() {
   });
   const ok = $('#impOk');
   if (ok) ok.onclick = async () => {
-    ok.disabled = true; let count = 0, last = null, cur = null;
+    ok.disabled = true; let count = 0, last = null, cur = null, tr = 0;
     for (const it of IMP.items) {
       const txns = (it.txns || []).filter(t => t.on && t.date && t.amount > 0);
       if (!txns.length) continue;
       const r = await api.commit_import({ file: it.file, account: it.account, card: it.card, currency: it.currency, method: it.method, txns });
-      count += r.count; if (r.months && (!last || r.months.at(-1) > last)) { last = r.months.at(-1); cur = r.currency; }
+      count += r.count; tr += r.transfers || 0; if (r.months && (!last || r.months.at(-1) > last)) { last = r.months.at(-1); cur = r.currency; }
     }
-    closeModal(); toast(`已导入 ${count} 笔交易`);
+    closeModal(); toast(`已导入 ${count} 笔交易` + (tr ? `，另识别出 ${tr} 笔内部转账（不计入收支）` : ''));
     if (cur) S.currency = cur; S.page = 'overview'; await reload(last);
   };
 }
