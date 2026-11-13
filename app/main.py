@@ -14,6 +14,7 @@ sys.path.insert(0, BASE)
 import webview  # noqa: E402
 
 import analysis  # noqa: E402
+import fx  # noqa: E402
 import parsers  # noqa: E402
 import store  # noqa: E402
 from categorize import (EXPENSE_CATEGORIES, INCOME_CATEGORIES, TRANSFER_CATEGORY, categorize,  # noqa: E402
@@ -44,11 +45,36 @@ def _norm_desc(s):
     return "".join(ch for ch in (s or "").lower() if ch.isalnum())
 
 
-def _enrich(txns, account, currency, learned, credit_card=False):
+def _base() -> str:
+    """合并视图折算成哪种货币：用户选的，否则是交易最多的那种。"""
+    have = [t["currency"] or "CNY" for t in store.all_transactions()]
+    saved = store.get_setting("base_currency", "")
+    if saved in fx.SYMBOLS:
+        return saved
+    return max(set(have), key=have.count) if have else "CNY"
+
+
+def _txns(currency):
+    """某一种货币的交易；currency 为 ALL 时是全部交易按当前参考汇率折算成基准货币。"""
+    if currency == fx.ALL:
+        return fx.convert_txns(store.all_transactions(), _base())
+    return store.all_transactions(currency)
+
+
+def _fx_info(codes, base) -> dict:
+    table = fx.rates()
+    return {"base": base, "symbol": fx.symbol(base), "date": table.get("date"), "source": table.get("source"),
+            "rates": [{"code": c, "rate": fx.rate(c, base, table), "known": c in table["rates"]}
+                      for c in codes if c != base]}
+
+
+def _enrich(txns, account, currency, learned, credit_card=False, owner=""):
     names = transfers.owner_names() + transfers.learn_owner(t.get("desc", "") for t in txns)
+    if owner:
+        names.append(owner.lower())
     for t in txns:
         t["account"] = account
-        t["currency"] = currency
+        t["currency"] = t.get("cur") or currency
         if t["kind"] != "transfer" and transfers.is_self(t.get("desc", ""), names):
             t["kind"] = "transfer"  # 对方是本人：自己账户间互转
         t["category"] = categorize(t.get("desc", ""), t["kind"], learned)
@@ -76,9 +102,12 @@ class Api:
             c = cur.setdefault(t["currency"] or "CNY", {"count": 0, "months": set()})
             c["count"] += 1
             c["months"].add(t["date"][:7])
-        currencies = [{"code": k, "symbol": analysis.SYMBOLS.get(k, k + " "), "count": v["count"],
-                       "months": sorted(v["months"])}
+        currencies = [{"code": k, "symbol": fx.symbol(k), "count": v["count"], "months": sorted(v["months"])}
                       for k, v in sorted(cur.items(), key=lambda kv: -kv[1]["count"])]
+        base = _base()
+        if len(currencies) > 1:  # 多种货币：多给一个“合并”视图
+            currencies.append({"code": fx.ALL, "symbol": fx.symbol(base), "count": len(txns), "merged": True,
+                               "months": sorted(set().union(*(v["months"] for v in cur.values())))})
         return {
             "currencies": currencies, "total": len(txns),
             "expense_categories": EXPENSE_CATEGORIES, "income_categories": INCOME_CATEGORIES,
@@ -87,7 +116,20 @@ class Api:
             "theme": store.get_setting("theme", "light"),
             "lang": store.get_setting("lang", "zh"),
             "today": dt.date.today().isoformat(),
+            "base": base, "codes": fx.CODES, "symbols": fx.SYMBOLS,
+            "fx": _fx_info(list(cur), base), "suggestions": len(transfers.suggestions()),
         }
+
+    # ---------- 货币 ----------
+    def set_base_currency(self, code):
+        if code in fx.SYMBOLS:
+            store.set_setting("base_currency", code)
+        return True
+
+    def refresh_rates(self):
+        """联网更新汇率（只在用户用到合并视图时调用；请求不带任何用户数据）。"""
+        r = fx.refresh()
+        return {"date": r.get("date"), "source": r.get("source"), "error": r.get("error")}
 
     def set_theme(self, theme):
         store.set_setting("theme", theme)
@@ -113,7 +155,8 @@ class Api:
         except Exception as e:  # 任何单个文件失败都不能影响其他文件
             traceback.print_exc()
             return {"file": name, "path": path, "error": f"无法解析：{e}"}
-        _enrich(res["txns"], res["account"], res["currency"], store.learned_rules(), res.get("credit_card"))
+        _enrich(res["txns"], res["account"], res["currency"], store.learned_rules(), res.get("credit_card"),
+                res.get("owner", ""))
         res["mode"] = mode
         return res
 
@@ -133,9 +176,11 @@ class Api:
                          "account": (batch.get("account") or "").strip()[:30],
                          "card": str(t.get("card") or batch.get("card") or "").strip()[:24],
                          "flow": t.get("flow") if t.get("flow") in ("in", "out") and t["kind"] == "transfer" else "",
-                         "currency": batch.get("currency") or "CNY"})
+                         "currency": t["cur"] if t.get("cur") in fx.SYMBOLS else (batch.get("currency") or "CNY")})
         if not txns:
             return {"count": 0}
+        if batch.get("owner"):
+            transfers.add_owner(str(batch["owner"])[:40])  # 账单抬头里的户名：以后认“转给自己”
         store.assign_hashes(txns)
         store.add_import(batch.get("file", "手动添加"), batch.get("account", ""), batch.get("method", ""), txns)
         n = transfers.reclassify()
@@ -144,10 +189,28 @@ class Api:
 
     # ---------- 查询 ----------
     def get_analysis(self, month, currency):
-        return analysis.analyze(store.all_transactions(currency), month, currency, store.get_setting("lang", "zh"))
+        lang = store.get_setting("lang", "zh")
+        merged = currency == fx.ALL
+        base = _base() if merged else currency
+        a = analysis.analyze(_txns(currency), month, base, lang)
+        everything = store.all_transactions()
+        codes = sorted({t["currency"] or "CNY" for t in everything})
+        if merged:
+            a["merged"] = _fx_info(codes, base)
+        elif len(codes) > 1:  # 分开展示：这个月其他货币各自的收支
+            a["others"] = []
+            for c in codes:
+                if c != currency:
+                    rows = [t for t in everything if (t["currency"] or "CNY") == c and t["date"][:7] == month]
+                    if rows:
+                        a["others"].append({"code": c, "symbol": fx.symbol(c),
+                                            "income": round(sum(t["amount"] for t in rows if t["kind"] == "income"), 2),
+                                            "expense": round(sum(t["amount"] for t in rows if t["kind"] == "expense")
+                                                             - sum(t["amount"] for t in rows if t["kind"] == "refund"), 2)})
+        return a
 
     def get_transactions(self, currency):
-        return transfers.with_pairs(store.all_transactions(currency))
+        return transfers.with_pairs(_txns(currency))
 
     def update_transaction(self, tid, fields):
         old = store.get_transaction(tid)
@@ -193,6 +256,13 @@ class Api:
         transfers.set_owner_names(text)
         return {"names": self.get_owner_names(), "transfers": transfers.reclassify()}
 
+    def transfer_suggestions(self):
+        return transfers.suggestions()
+
+    def decide_route(self, sig, is_self):
+        """用户确认一条转账路线是不是自己的账户（None = 撤销）。"""
+        return {"transfers": transfers.decide_route(str(sig), is_self), "left": len(transfers.suggestions())}
+
     def reclassify_transfers(self):
         return {"names": self.get_owner_names(), "transfers": transfers.reclassify()}
 
@@ -229,7 +299,9 @@ class Api:
         path = res if isinstance(res, str) else res[0]
         if not path.lower().endswith(".xlsx"):
             path += ".xlsx"
-        txns = store.all_transactions(currency)
+        txns = _txns(currency)
+        if currency == fx.ALL:
+            currency = _base()
         wb = Workbook()
         head_font, head_fill = Font(bold=True, color="FFFFFF"), PatternFill("solid", fgColor="2A78D6")
 
@@ -382,6 +454,8 @@ def main():
             res = {"started": ok, "qr": "<svg" in Api().sync_status()["qr"]}
             for p in ("/api/ping", "/", "/m.js", "/m.css", "/echarts.min.js", "/icon.png"):
                 res[p] = len(urllib.request.urlopen(base + p, timeout=5).read())
+            fresh = fx.refresh()  # 打包后的程序能否联网取汇率（HTTPS 证书是否可用）
+            res["fx"] = fresh.get("error") or f'{fresh.get("source")} {fresh.get("date")}'
         except Exception:
             res = {"error": traceback.format_exc()}
         with open(out, "w", encoding="utf-8") as fh:

@@ -19,6 +19,7 @@ from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 from bottle import Bottle, HTTPResponse, request, response, static_file
 
 import analysis
+import fx
 import store
 import transfers
 from categorize import EXPENSE_CATEGORIES, INCOME_CATEGORIES, TRANSFER_CATEGORY, categorize
@@ -63,12 +64,17 @@ def build_payload(lang: str = "zh") -> dict:
     for t in txns:
         by_cur.setdefault(t["currency"] or "CNY", []).append(t)
     currencies = []
-    for code, rows in sorted(by_cur.items(), key=lambda kv: -len(kv[1])):
+    groups = sorted(by_cur.items(), key=lambda kv: -len(kv[1]))
+    if len(groups) > 1:  # 多种货币：手机上也给一个按当前汇率折算的“合并”视图
+        base = store.get_setting("base_currency", "") or groups[0][0]
+        groups.append((fx.ALL, fx.convert_txns(txns, base)))
+    for code, rows in groups:
+        real = base if code == fx.ALL else code
         months = analysis.months_available(rows)
         currencies.append({
-            "code": code, "symbol": analysis.SYMBOLS.get(code, code + " "), "months": months,
-            "analyses": {m: analysis.analyze(rows, m, code, lang) for m in months[-12:]},
-            "txns": [{k: t.get(k) for k in ("id", "date", "amount", "kind", "category", "desc", "account", "card", "pair")}
+            "code": code, "symbol": fx.symbol(real), "months": months, "merged": code == fx.ALL, "base": real,
+            "analyses": {m: analysis.analyze(rows, m, real, lang) for m in months[-12:]},
+            "txns": [{k: t.get(k) for k in ("id", "date", "amount", "kind", "category", "desc", "account", "card", "pair", "orig_amount", "orig_currency")}
                      for t in transfers.with_pairs(rows)[:3000]],
         })
     return {
@@ -95,7 +101,8 @@ def accept_push(items: list) -> int:
         txns.append({"date": d, "amount": amt, "kind": kind, "desc": desc,
                      "category": str(it.get("category") or categorize(desc, kind))[:20],
                      "account": str(it.get("account") or "手机记账")[:30],
-                     "currency": str(it.get("currency") or "CNY")[:3],
+                     "currency": (store.get_setting("base_currency", "") or "CNY") if it.get("currency") == fx.ALL
+                     else str(it.get("currency") or "CNY")[:3],
                      "hash": hashlib.md5(("m|" + str(it.get("cid", ""))).encode()).hexdigest()})
     have = store.existing_hashes({t["hash"] for t in txns})
     fresh = [t for t in txns if t["hash"] not in have]

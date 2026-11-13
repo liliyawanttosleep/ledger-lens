@@ -102,7 +102,7 @@ def all_transactions(currency=None):
 
 
 def update_transaction(tid, fields: dict):
-    allowed = {k: v for k, v in fields.items() if k in ("date", "amount", "kind", "category", "desc", "account", "card", "locked", "flow", "pair_id")}
+    allowed = {k: v for k, v in fields.items() if k in ("date", "amount", "kind", "category", "desc", "account", "card", "locked", "flow", "pair_id", "currency")}
     if not allowed:
         return
     sets = ", ".join(f"{k}=?" for k in allowed)

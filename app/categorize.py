@@ -30,6 +30,15 @@ TRANSFER_KEYWORDS = [
     "amex epayment", "citi card online", "barclaycard", "wealthfront", "robinhood", "fidelity",
     "vanguard", "schwab", "coinbase", "fid bkg svc", "card transfer credit", "card transfer debit",
     "external transfer deposit", "external transfer withdrawal",
+    # 各家银行 App / 支付 App 截图和账单里常见的“自己的钱挪地方”
+    "花呗还款", "白条还款", "信用卡自动扣款", "转入余额宝", "余额宝转出", "余额宝-转出", "零钱通转出", "转入零钱通",
+    "零钱充值", "微信零钱充值", "余额充值", "提现到银行卡", "转入银行卡", "银行卡转入", "朝朝宝", "朝朝盈", "活期宝",
+    "理财购买", "理财赎回", "基金赎回", "基金买入", "定期转活期", "活期转定期", "定存", "通知存款", "结构性存款",
+    "购汇", "结汇", "本人账户", "我的账户", "自己的账户", "转给自己", "同名账户", "名下账户", "证券转银行", "银行转证券",
+    "transfer to savings account", "transfer to checking account", "savings transfer", "to my account",
+    "own account", "between my accounts", "self transfer", "venmo cashout", "cash app cash out", "cash out to bank",
+    "paypal transfer", "add money to", "money market transfer", "sweep", "overdraft transfer",
+    "brokerage transfer", "transfer to brokerage", "transfer from brokerage", "ira contribution", "cd deposit",
 ]
 
 EXPENSE_RULES = [

@@ -74,7 +74,7 @@ async function drill(f) {
       <div class="src-grid">${srcs.map(([k, v]) => `<div class="src"><span>${esc(k)}</span><b class="num">${money(v.amt)}</b><div class="track"><i style="width:${total ? v.amt / total * 100 : 0}%"></i></div><em class="num">${v.n} 笔 · ${total ? (v.amt / total * 100).toFixed(0) : 0}%</em></div>`).join('')}</div>
       <div class="toolbar" style="margin:14px 0 6px"><b style="font-size:14px">每一笔</b><div class="seg sp" id="drSort"><button data-v="date" class="${DR.sort === 'date' ? 'on' : ''}">按日期</button><button data-v="amount" class="${DR.sort === 'amount' ? 'on' : ''}">按金额</button></div></div>
       <table class="tbl"><thead><tr><th>日期</th><th>商家 / 描述</th><th>分类</th><th>银行 / 账户</th><th>卡片 / 支付方式</th><th class="r">金额</th></tr></thead><tbody>
-      ${rows.map(t => `<tr><td class="num muted">${t.date}</td><td style="max-width:300px"><div class="desc" title="${esc(t.desc)}">${esc(t.desc)}</div>${pairTag(t)}</td><td><span class="tag">${esc(t.category)}</span></td><td>${esc(t.account || '—')}</td><td class="${t.card ? '' : 'muted'}">${esc(t.card || '未识别')}</td><td class="r num ${t.kind === 'income' ? 'amt-in' : ''}"><b>${SIGN[t.kind]}${sym()}${num(t.amount)}</b></td></tr>`).join('') || '<tr><td colspan="6" class="note">没有记录</td></tr>'}</tbody></table>
+      ${rows.map(t => `<tr><td class="num muted">${t.date}</td><td style="max-width:300px"><div class="desc" title="${esc(t.desc)}">${esc(t.desc)}</div>${pairTag(t)}</td><td><span class="tag">${esc(t.category)}</span></td><td>${esc(t.account || '—')}</td><td class="${t.card ? '' : 'muted'}">${esc(t.card || '未识别')}</td><td class="r num ${t.kind === 'income' ? 'amt-in' : ''}"><b>${SIGN[t.kind]}${sym()}${num(t.amount)}</b>${origTag(t)}</td></tr>`).join('') || '<tr><td colspan="6" class="note">没有记录</td></tr>'}</tbody></table>
     </div>
     <div class="m-foot"><span>卡片信息来自账单里的卡号 / 支付方式；没识别到的可在“交易明细”里补上</span><div><button class="btn" id="drOpen">在交易明细中打开</button><button class="btn primary" data-close>关闭</button></div></div>`);
   $$('#drSort button').forEach(b => b.onclick = () => { DR.sort = b.dataset.v; drill(); });
@@ -123,6 +123,49 @@ function scoreParts(parts) {
   return `<div class="parts">${parts.map(p => `<div class="part"><span>${p.name}</span><div class="track"><i style="width:${p.score / p.max * 100}%"></i></div><em class="num">${p.score}/${p.max}</em><small>${esc(p.note)}</small></div>`).join('') || '<span class="muted" style="color:var(--ink-3)">数据不足，无法评分</span>'}</div>`;
 }
 function animateRings() { requestAnimationFrame(() => $$('.ring .fg').forEach(e => e.style.strokeDashoffset = e.dataset.to)); }
+
+/* ───────── 货币：分开展示 / 合并折算；疑似内部转账确认 ───────── */
+const curSym = c => (S.boot.symbols && S.boot.symbols[c]) || (c + ' ');
+const fxNum = r => r >= 100 ? num(r, 2) : r >= 0.01 ? r.toFixed(4) : r.toFixed(6);
+const origTag = t => t.orig_currency ? `<div class="pair" data-raw>${curSym(t.orig_currency)}${num(t.orig_amount)}</div>` : '';
+function strips() {
+  const a = S.a; let h = '';
+  if (!a) return h;
+  if (a.merged) {
+    const m = a.merged;
+    h += `<div class="card excl"><span class="pill info">${icon('info')}合并视图</span><span>全部货币折算为<select class="select" id="baseSel" style="margin-left:8px">${S.boot.codes.map(c => `<option value="${c}"${c === m.base ? ' selected' : ''}>${c}</option>`).join('')}</select></span>
+      ${m.rates.map(r => r.known ? `<span class="num" data-raw>1 ${r.code} = ${m.symbol}${fxNum(r.rate)}</span>` : `<span><span data-raw>${r.code}</span> 没有汇率，按 1:1 计</span>`).join('')}
+      <a id="fxRefresh">更新汇率</a><em>参考汇率 · <span data-raw>${m.date}</span> · ${m.source === 'builtin' ? '内置汇率（离线）' : '<span data-raw>Rates By Exchange Rate API</span>'}</em></div>`;
+  } else if (a.others && a.others.length) {
+    h += `<div class="card excl"><span class="pill info">${icon('info')}其他货币</span>${a.others.map(o => `<a data-cur="${o.code}"><b data-raw>${o.code}</b>收入 <span class="num" data-raw>${o.symbol}${num(o.income, 0)}</span> · 支出 <span class="num" data-raw>${o.symbol}${num(o.expense, 0)}</span></a>`).join('')}<a data-cur="ALL"><b>合并查看</b></a><em>不同货币分开统计；合并时按当前参考汇率折算</em></div>`;
+  }
+  if (S.page === 'overview' && S.boot.suggestions) h += `<div class="card excl"><span class="pill warn">${icon('info')}待确认</span><a id="sgOpen"><b>发现 ${S.boot.suggestions} 组可能是你自己账户之间的转账</b></a><em>确认后不计入收支，并记住这条转账路线</em></div>`;
+  return h;
+}
+function bindStrips() {
+  const b = $('#baseSel'); if (b) b.onchange = async () => { await api.set_base_currency(b.value); await reload(S.month); };
+  const f = $('#fxRefresh'); if (f) f.onclick = async () => { const r = await api.refresh_rates(); toast(r.error ? '无法联网，继续使用现有汇率' : '汇率已更新'); await reload(S.month); };
+  $$('#content [data-cur]').forEach(e => e.onclick = () => { S.currency = e.dataset.cur; S.a = null; S.txns = null; pickMonth(S.month); render(); });
+  const s = $('#sgOpen'); if (s) s.onclick = openSuggestions;
+  if (S.currency === 'ALL' && !S.fxTried) { S.fxTried = true; api.refresh_rates().then(r => { if (!r.error && S.currency === 'ALL') reload(S.month); }); }
+}
+const REASON = { both: '有来有往', freq: '次数多', monthly: '每月都有', round: '金额多为整数', name: '带有你的名字', bank: '点名了银行或账户尾号' };
+async function openSuggestions() {
+  const list = await api.transfer_suggestions();
+  openModal(`<div class="m-head"><div><h2>这些是你自己账户之间的转账吗？</h2><p>这里只列程序拿不准的转账路线。选“是我自己的账户”后，这条路线上的记录不再计入收入和支出，以后导入的同类记录也会自动识别。</p></div><button class="icon-btn" data-close>${icon('x')}</button></div>
+    <div class="m-body">${list.map((s, i) => `<div class="sg" data-i="${i}"><div class="sg-main"><div class="desc" title="${esc(s.desc)}">${esc(s.desc)}</div>
+      <div class="pair" style="white-space:normal"><span data-raw>${esc(s.accounts.join(' / '))}</span> · ${s.count} 笔（转出 ${s.outs} · 转入 ${s.ins}）· 合计 <span class="num" data-raw>${curSym(s.currency)}${num(s.total)}</span> · <span data-raw>${s.first} ~ ${s.last}</span></div>
+      <div class="sg-why">${s.reasons.map(r => `<span class="tag">${REASON[r]}</span>`).join('')}</div></div>
+      <div class="sg-act"><button class="btn primary sm" data-yes>是我自己的账户</button><button class="btn sm" data-no>不是，算收支</button></div></div>`).join('') || '<div class="note">没有需要确认的转账</div>'}</div>
+    <div class="m-foot"><span>有还款字样、本人姓名、自己另一张卡的尾号，或两头账单对得上的转账已自动处理</span><div><button class="btn primary" data-close>完成</button></div></div>`);
+  const done = async () => { closeModal(); await reload(S.month); };
+  $$('#modalCard [data-close]').forEach(b => b.onclick = done);
+  $$('#modalCard .sg').forEach(row => {
+    const s = list[+row.dataset.i];
+    const decide = async yes => { const r = await api.decide_route(s.sig, yes); row.remove(); toast(yes ? '已记住：这是你自己的账户，不计入收支' : '已记住：这不是内部转账'); if (!r.left || !$('#modalCard .sg')) await done(); };
+    $('[data-yes]', row).onclick = () => decide(true); $('[data-no]', row).onclick = () => decide(false);
+  });
+}
 
 /* ───────── 页面：概览 ───────── */
 function excludedStrip(a) {
@@ -316,7 +359,7 @@ function renderTxnTable() {
       <td><select class="cell-select" data-f="kind">${kindOptions(t.kind)}</select></td>
       <td><select class="cell-select" data-f="category">${catOptions(t.kind, t.category)}</select></td>
       <td class="muted">${esc(t.account)}${t.card ? ' · ' + esc(t.card) : ''}</td>
-      <td class="r num ${t.kind === 'income' ? 'amt-in' : t.kind === 'transfer' ? 'amt-tr' : ''}"><b>${SIGN[t.kind]}${sym()}${num(t.amount)}</b></td>
+      <td class="r num ${t.kind === 'income' ? 'amt-in' : t.kind === 'transfer' ? 'amt-tr' : ''}"><b>${SIGN[t.kind]}${sym()}${num(t.amount)}</b>${origTag(t)}</td>
       <td class="r" style="white-space:nowrap"><button class="icon-btn" data-act="edit" title="编辑">${icon('edit')}</button><button class="icon-btn" data-act="del" title="删除">${icon('trash')}</button></td></tr>`).join('')
       || '<tr><td colspan="7" class="note">没有符合条件的交易</td></tr>'}</tbody></table>
     <div class="pager"><span>共 ${rows.length} 笔　收入 <b class="amt-in num">${money(inc)}</b>　支出 <b class="num" style="color:var(--ink)">${money(exp)}</b></span>
@@ -325,7 +368,7 @@ function renderTxnTable() {
   $('#pgNext').onclick = () => { f.page++; renderTxnTable(); };
   $$('#txnTable select').forEach(sel => sel.onchange = async () => {
     const id = +sel.closest('tr').dataset.id, t = await api.update_transaction(id, { [sel.dataset.f]: sel.value });
-    Object.assign(S.txns.find(x => x.id === id), t); S.a = null; renderTxnTable();
+    if (S.currency === 'ALL') S.txns = await api.get_transactions('ALL'); else Object.assign(S.txns.find(x => x.id === id), t); S.a = null; renderTxnTable();
     toast(sel.dataset.f === 'category' ? '已修改，并记住了这类交易的分类' : '已修改');
   });
   $$('#txnTable [data-act]').forEach(b => b.onclick = async () => {
@@ -337,22 +380,24 @@ function renderTxnTable() {
 }
 function editTxn(t) {
   const isNew = !t; t = t || { date: S.boot.today, amount: '', kind: 'expense', category: '餐饮美食', desc: '', account: S.boot.accounts[0] || '现金' };
+  const eCur = t.orig_currency || t.currency || (S.currency === 'ALL' ? S.boot.base : S.currency) || 'CNY';
   openModal(`<div class="m-head"><div><h2>${isNew ? '手动记一笔' : '编辑交易'}</h2></div><button class="icon-btn" data-close>${icon('x')}</button></div>
     <div class="m-body"><div class="form">
       <label>日期<input class="input" type="date" id="eDate" value="${t.date}"></label>
-      <label>金额（${sym()}）<input class="input" type="number" step="0.01" min="0" id="eAmt" value="${t.amount}"></label>
+      <label>金额<input class="input" type="number" step="0.01" min="0" id="eAmt" value="${t.orig_amount ?? t.amount}"></label>
       <label>类型<select class="select" id="eKind">${kindOptions(t.kind)}</select></label>
       <label>分类<select class="select" id="eCat">${catOptions(t.kind, t.category)}</select></label>
       <label class="wide">描述<input class="input" id="eDesc" value="${esc(t.desc)}" placeholder="例如：房租、工资、和朋友聚餐"></label>
       <label class="wide">账户<input class="input" id="eAcc" value="${esc(t.account)}" list="accList"><datalist id="accList">${S.boot.accounts.map(a => `<option value="${esc(a)}">`).join('')}</datalist></label>
-      <label class="wide">卡片 / 支付方式<input class="input" id="eCard" value="${esc(t.card || '')}" placeholder="例如：储蓄卡尾号1234、信用卡、花呗"></label>
+      <label>币种<select class="select" id="eCur">${S.boot.codes.map(c => `<option value="${c}"${c === eCur ? ' selected' : ''}>${c}</option>`).join('')}</select></label>
+      <label>卡片 / 支付方式<input class="input" id="eCard" value="${esc(t.card || '')}" placeholder="例如：储蓄卡尾号1234、信用卡、花呗"></label>
     </div></div>
     <div class="m-foot"><span></span><div><button class="btn" data-close>取消</button><button class="btn primary" id="eSave">保存</button></div></div>`, true);
   $('#eKind').onchange = e => $('#eCat').innerHTML = catOptions(e.target.value);
   $('#eSave').onclick = async () => {
-    const v = { date: $('#eDate').value, amount: parseFloat($('#eAmt').value), kind: $('#eKind').value, category: $('#eCat').value, desc: $('#eDesc').value.trim() || '(无描述)', account: $('#eAcc').value.trim(), card: $('#eCard').value.trim() };
+    const v = { date: $('#eDate').value, amount: parseFloat($('#eAmt').value), kind: $('#eKind').value, category: $('#eCat').value, desc: $('#eDesc').value.trim() || '(无描述)', account: $('#eAcc').value.trim(), card: $('#eCard').value.trim(), currency: $('#eCur').value };
     if (!v.date || !(v.amount > 0)) return toast('请填写日期和大于 0 的金额');
-    if (isNew) await api.commit_import({ file: '手动添加', account: v.account, currency: S.currency || 'CNY', method: '手动', txns: [v] });
+    if (isNew) await api.commit_import({ file: '手动添加', account: v.account, currency: v.currency, method: '手动', txns: [v] });
     else await api.update_transaction(t.id, v);
     closeModal(); toast('已保存'); await reload(isNew ? v.date.slice(0, 7) : null);
   };
@@ -371,7 +416,7 @@ async function pageImports() {
     <div class="toolbar" style="margin:0"><button class="btn" id="exportBtn">${icon('download')}导出 Excel 报告</button><button class="btn" id="demoBtn">载入示例数据</button><button class="btn danger" id="clearBtn">${icon('trash')}清空全部数据</button></div></div>
   <div class="card" style="margin-top:18px"><div class="card-h"><h3>内部转账识别</h3><span>信用卡还款、自己账户之间互转不算收入也不算开销</span></div>
     <p style="color:var(--ink-2);font-size:13.5px;margin-bottom:12px;user-select:text">程序会自动识别三类记录并标为“内部转账”：① 账单里的还款 / 转账字样（如 Payment Thank You、Payment from CHK、Ext Trnsfr、信用卡还款）；② 对方是你本人的转账（如 Zelle payment to 你的名字）；③ 两个账户之间金额相同、日期相近的一出一进。你手动改过类型的交易不会被再次改动。</p><p style="color:var(--ink-2);font-size:13.5px;margin-bottom:12px;user-select:text">每次导入新账单，程序都会拿它和之前导入的所有账单核对，对上的两笔会互相标注“↔ 对方账户”；同一条转账路线对上过两次后，以后即使另一头的账单还没导入也会直接识别。</p>
-    <div class="toolbar" style="margin:0"><input class="input grow" id="ownerNames" value="${esc(owner)}" placeholder="你在银行账单上的姓名，多个用逗号分隔，例如：Zhang San, 张三"><button class="btn" id="ownerSave">保存并重新识别</button></div></div>`;
+    <div class="toolbar" style="margin:0"><input class="input grow" id="ownerNames" value="${esc(owner)}" placeholder="你在银行账单上的姓名，多个用逗号分隔，例如：Zhang San, 张三"><button class="btn" id="sgBtn">查看待确认的转账</button><button class="btn" id="ownerSave">保存并重新识别</button></div></div>`;
   return { html, draw() {
     $$('#content tr[data-id] .icon-btn').forEach(b => b.onclick = async () => {
       if (!await confirmBox('删除这次导入？', '这次导入带来的所有交易都会被移除。', '删除')) return;
@@ -379,6 +424,7 @@ async function pageImports() {
     });
     $('#exportBtn').onclick = async () => { if (!S.currency) return toast('还没有数据可导出'); const p = await api.export_excel(S.currency); if (p) toast('已导出：' + p); };
     $('#demoBtn').onclick = loadDemo;
+    $('#sgBtn').onclick = openSuggestions;
     $('#ownerSave').onclick = async () => { const r = await api.set_owner_names($('#ownerNames').value); toast(r.transfers ? `新识别出 ${r.transfers} 笔内部转账` : '已保存，没有发现新的内部转账'); await reload(); };
     $('#clearBtn').onclick = async () => { if (!await confirmBox('清空全部数据？', '所有交易和导入记录都会被删除，且无法恢复。', '清空')) return; await api.clear_all(); toast('已清空'); await reload(); };
   } };
@@ -453,12 +499,12 @@ function fileCard(it, i) {
     `<select class="select" data-mode title="文件类型"><option value="auto"${it.mode === 'auto' ? ' selected' : ''}>自动判断</option><option value="statement"${it.mode === 'statement' ? ' selected' : ''}>银行流水</option><option value="income"${it.mode === 'income' ? ' selected' : ''}>收入凭证</option></select>
      <input class="input" style="width:130px" data-acc value="${esc(it.account)}" title="账户名称" placeholder="账户名称">
      <input class="input" style="width:130px" data-card value="${esc(it.card || '')}" title="卡片 / 卡号后四位" placeholder="卡片（如尾号1234）">
-     <select class="select" data-cur title="币种">${['CNY', 'USD', 'HKD', 'EUR', 'GBP'].map(c => `<option${c === it.currency ? ' selected' : ''}>${c}</option>`).join('')}</select>`)}
+     <select class="select" data-cur title="币种">${S.boot.codes.map(c => `<option value="${c}"${c === it.currency ? ' selected' : ''}>${c}</option>`).join('')}</select>`)}
     ${(it.warnings || []).map(w => `<div class="fwarn">${icon('info')}${esc(w)}</div>`).join('')}
     ${it.txns.length ? `<div class="ftable"><table class="tbl"><thead><tr><th style="width:30px"><input type="checkbox" data-all ${it.txns.every(t => t.on) ? 'checked' : ''}></th><th style="width:138px">日期</th><th>描述</th><th style="width:104px">类型</th><th style="width:118px">分类</th><th class="r" style="width:110px">金额</th></tr></thead><tbody>
     ${it.txns.map((t, j) => `<tr data-j="${j}" class="${t.on ? '' : 'off'}"><td><input type="checkbox" data-f="on" ${t.on ? 'checked' : ''}></td><td><input class="input num" type="date" data-f="date" value="${t.date}"></td><td><input class="input" data-f="desc" value="${esc(t.desc)}"></td>
       <td><select class="select" data-f="kind">${kindOptions(t.kind)}</select></td><td><select class="select" data-f="category">${catOptions(t.kind, t.category)}</select></td>
-      <td><input class="input num r" style="text-align:right" type="number" step="0.01" data-f="amount" value="${t.amount}"></td></tr>`).join('')}</tbody></table></div>` : ''}
+      <td><div style="display:flex;align-items:center;gap:6px">${t.cur ? `<span class="tag" data-raw title="这一笔写明的币种">${t.cur}</span>` : ''}<input class="input num r" style="text-align:right" type="number" step="0.01" data-f="amount" value="${t.amount}"></div></td></tr>`).join('')}</tbody></table></div>` : ''}
     <div style="padding:8px 14px"><button class="btn sm" data-addrow>${icon('plus')}补一行</button></div></div>`;
 }
 function bindImport() {
@@ -489,7 +535,7 @@ function bindImport() {
     for (const it of IMP.items) {
       const txns = (it.txns || []).filter(t => t.on && t.date && t.amount > 0);
       if (!txns.length) continue;
-      const r = await api.commit_import({ file: it.file, account: it.account, card: it.card, currency: it.currency, method: it.method, txns });
+      const r = await api.commit_import({ file: it.file, account: it.account, card: it.card, currency: it.currency, method: it.method, owner: it.owner, txns });
       count += r.count; tr += r.transfers || 0; pr += r.paired || 0; if (r.months && (!last || r.months.at(-1) > last)) { last = r.months.at(-1); cur = r.currency; }
     }
     closeModal(); toast(`已导入 ${count} 笔交易` + (tr ? `，另识别出 ${tr} 笔内部转账（不计入收支）` : '') + (pr ? `，与已有账单对上 ${pr} 对转账` : ''));
@@ -518,7 +564,7 @@ const TITLES = { overview: '本月概览', analysis: '收支分析', advice: '�
 function months() { return (S.boot.currencies.find(c => c.code === S.currency) || { months: [] }).months; }
 function renderTop() {
   const ms = months(), has = ms.length > 0;
-  $('#curSeg').innerHTML = S.boot.currencies.length > 1 ? S.boot.currencies.map(c => `<button data-c="${c.code}" class="${c.code === S.currency ? 'on' : ''}">${c.code}</button>`).join('') : '';
+  $('#curSeg').innerHTML = S.boot.currencies.length > 1 ? S.boot.currencies.map(c => `<button data-c="${c.code}" class="${c.code === S.currency ? 'on' : ''}">${c.code === 'ALL' ? '合并' : c.code}</button>`).join('') : '';
   $$('#curSeg button').forEach(b => b.onclick = () => { S.currency = b.dataset.c; S.month = null; S.a = null; S.txns = null; pickMonth(); render(); });
   $('#monthNav').style.display = has ? '' : 'none';
   if (has) {
@@ -544,12 +590,13 @@ async function render() {
     if (has && S.page === 'txns' && !S.txns) S.txns = await api.get_transactions(S.currency);
     page = S.page === 'imports' ? await pageImports() : S.a.has_data || S.page === 'txns' ? { overview: pageOverview, analysis: pageAnalysis, advice: pageAdvice, txns: pageTxns }[S.page]() : { html: '<div class="note">这个月没有记录</div>', draw() {} };
   }
+  if (has && page && ['overview', 'analysis', 'advice', 'txns'].includes(S.page)) page.html = strips() + page.html;
   const k = S.a && S.a.kpi;
   $('#pageSub').textContent = S.page === 'sync' ? '在手机上查看分析、随手记账，回到同一 Wi-Fi 自动同步' : !has ? '导入账单后即可开始' : S.page === 'imports' ? `共 ${S.boot.total} 笔交易` : `${monthLabel(S.month)} · ${k.count} 笔收支${k.is_current ? ' · 本月进行中' : ''}`;
   const urgent = S.a ? S.a.advice.filter(x => x.level === 'alert' || x.level === 'warn').length : 0;
   $('#adviceBadge').textContent = urgent || '';
   $('#content').innerHTML = page.html; $('#content').scrollTop = 0;
-  page.draw();
+  page.draw(); bindStrips();
   $$('#content [data-go]').forEach(e => e.onclick = () => go(e.dataset.go));
   $$('#content [data-drill]').forEach(e => e.onclick = () => drill(JSON.parse(e.dataset.drill)));
   $$('#content [data-income]').forEach(e => e.onclick = () => startImport(null, 'income'));

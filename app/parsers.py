@@ -17,6 +17,7 @@ import zipfile
 from collections import Counter
 from html.parser import HTMLParser
 
+import fx
 from categorize import is_transfer, looks_like_income
 
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif", ".tif", ".tiff", ".jfif"}
@@ -272,16 +273,37 @@ def guess_account(text: str, filename: str, folder: str = "") -> str:
     return best[1] if best else os.path.splitext(filename)[0][:20]
 
 
+_OWNER = [
+    re.compile(r"(?:户\s*名|账户名称?|帐户名称?|客户姓名|客户名称|持卡人(?:姓名)?|姓\s*名|真实姓名)\s*[:：]\s*\[?([\u4e00-\u9fff·]{2,8})"),
+    re.compile(r"(?:account holder|account name|account owner|customer name|primary (?:account )?holder|cardholder name|"
+               r"card member|name on account)\s*[:：]?\s*([A-Za-z][A-Za-z .'\-]{3,40}?)(?=\s{2,}|\s*$|\s*[,;|])", re.I | re.M),
+]
+_NOT_OWNER = re.compile(r"银行|公司|支行|分行|账户|帐户|类型|number|account|statement|bank|type|summary|ending|\d", re.I)
+
+
+def guess_owner(text: str) -> str:
+    """账单抬头里的户名 / 持卡人姓名（用来认出“转给自己”）。找不到返回空串。"""
+    head = (text or "")[:4000]
+    for rx in _OWNER:
+        for m in rx.finditer(head):
+            name = re.sub(r"\s+", " ", m[1]).strip(" .-")
+            if len(name) >= 2 and not _NOT_OWNER.search(name) and (re.search(r"[\u4e00-\u9fff]", name) or " " in name):
+                return name
+    return ""
+
+
 def guess_currency(text: str) -> str:
     t = text[:20000]
     cjk = len(re.findall(r"[\u4e00-\u9fff]", t))
-    if "HK$" in t or "HKD" in t:
-        return "HKD"
-    if "€" in t or "EUR" in t:
-        return "EUR"
-    if "£" in t or "GBP" in t:
-        return "GBP"
-    usd = t.count("$") + t.count("USD") * 2
+    # 港币、欧元、英镑、日元、韩元、加元……：账单里反复写明才算整份文件的币种。
+    # 只出现一次的（美元账单里的一笔境外消费）不算，除非文字很少（一张截图）。逐笔的币种另由 fx.amount_currency 识别。
+    n = fx.count_tokens(t)
+    best = max((c for c in n if c not in ("CNY", "USD")), key=lambda c: n[c])
+    plain = max(0, t.count("$") - n[best]) + t.count("USD") * 2 + t.count("¥") + t.count("￥") + n["CNY"]
+    if n[best] > plain and (n[best] >= 2 or len(t) < 400):
+        return best
+    usd = max(0, t.count("$") - sum(n[c] for c in ("HKD", "CAD", "AUD", "SGD", "TWD", "NZD", "MXN", "BRL", "MOP"))) \
+        + t.count("USD") * 2
     cny = t.count("¥") + t.count("￥") + t.count("CNY") * 2 + t.count("人民币") * 2 + t.count("元")
     if usd > cny and cjk < 200:
         return "USD"
@@ -446,12 +468,9 @@ def parse_grid(rows, ctx, forced_mapping=None):
             if v and v not in ("/", "-", "None") and v not in parts and not re.match(r"download from\b", v, re.I):
                 parts.append(v)
         desc = " · ".join(parts)
-        if cur_col is not None and currency is None:
-            cv = str(_cell(row, cur_col) or "")
-            if re.search(r"美元|usd", cv, re.I):
-                currency = "USD"
-            elif re.search(r"人民币|cny|rmb", cv, re.I):
-                currency = "CNY"
+        row_cur = fx.code_of(_cell(row, cur_col)) if cur_col is not None else ""
+        if row_cur and currency is None:
+            currency = row_cur
 
         sign, amount, neutral = 0, None, False
         vin, vout = parse_number(_cell(row, in_col)), parse_number(_cell(row, out_col))
@@ -473,11 +492,11 @@ def parse_grid(rows, ctx, forced_mapping=None):
                     sign = -1
                 else:
                     neutral = True
-            staged.append([date, amount, sign, desc, neutral, signed, v, _card_label(_cell(row, method_col))])
+            staged.append([date, amount, sign, desc, neutral, signed, v, _card_label(_cell(row, method_col)), row_cur])
             continue
         else:
             continue
-        staged.append([date, amount, sign, desc, neutral, 0, None, _card_label(_cell(row, method_col))])
+        staged.append([date, amount, sign, desc, neutral, 0, None, _card_label(_cell(row, method_col)), row_cur])
 
     # 单金额列且无方向列：根据正负号含义判断
     undecided = [s for s in staged if s[2] == 0 and not s[4] and s[6] is not None]
@@ -493,10 +512,12 @@ def parse_grid(rows, ctx, forced_mapping=None):
                 s[2] = 1 if looks_like_income(s[3]) else -1
 
     txns = []
-    for date, amount, sign, desc, neutral, _, _, card in staged:
+    for date, amount, sign, desc, neutral, _, _, card, row_cur in staged:
         kind = "transfer" if neutral else _finalize_kind(sign, desc)
         t = _mk(date, amount, kind, desc, sign)
         t["card"] = card
+        if row_cur:
+            t["cur"] = row_cur  # 表格里逐行写明的币种
         txns.append(t)
     return txns, mapping, currency
 
@@ -573,7 +594,7 @@ def parse_text_lines(lines, ctx, credit_card=False):
         amt = amts[0]
         bal = amts[-1][0] if len(amts) >= 2 else None
         rows.append({"date": date, "amt": amt[0], "sign": amt[1], "bal": bal,
-                     "section": section, "desc": desc})
+                     "section": section, "desc": desc, "cur": fx.amount_currency(line, amt[0])})
 
     # 用余额变化反推收支方向（最可靠）
     def model(step):
@@ -606,6 +627,8 @@ def parse_text_lines(lines, ctx, credit_card=False):
         else:
             sign = 1 if looks_like_income(r["desc"]) else -1
         txns.append(_mk(r["date"], r["amt"], _finalize_kind(sign, r["desc"]), r["desc"], sign))
+        if r["cur"]:
+            txns[-1]["cur"] = r["cur"]
     return txns
 
 
@@ -692,7 +715,7 @@ def parse_ocr_lines(lines, ctx):
             amts = []
         if _SKIP_LINE.search(line):
             amts = []
-        recs.append({"date": date, "amts": amts, "desc": re.sub(r"今天|昨天|前天", "", desc).strip()})
+        recs.append({"date": date, "amts": amts, "desc": re.sub(r"今天|昨天|前天", "", desc).strip(), "raw": line})
 
     amt_idx = [i for i, r in enumerate(recs) if r["amts"]]
     date_only = [i for i, r in enumerate(recs) if r["date"] and not r["amts"]]
@@ -728,6 +751,9 @@ def parse_ocr_lines(lines, ctx):
         if sign == 0:
             sign = 1 if looks_like_income(desc) else -1
         txns.append(_mk(date, val, _finalize_kind(sign, desc), desc, sign))
+        cur = fx.amount_currency(r["raw"], val)
+        if cur:
+            txns[-1]["cur"] = cur  # 截图里紧挨金额写明的币种
     return txns
 
 
@@ -1036,12 +1062,18 @@ def parse_file(path: str, mode: str = "auto", password: str | None = None) -> di
     today = dt.date.today()
     txns = [t for t in txns if "2000-01-01" <= t["date"] <= (today + dt.timedelta(days=1)).isoformat()]
     card = guess_card(full_text, name, credit_card)
+    currency = currency or guess_currency(full_text)
     for t in txns:
         t["card"] = t.get("card") or card
+        if t.get("cur") == currency:
+            t.pop("cur")  # 只保留与整份文件不同的币种
+    mixed = sorted({t["cur"] for t in txns if t.get("cur")})
+    if mixed:
+        warnings.append("这份文件里有多种货币（" + "、".join([currency] + mixed) + "），已按每一笔写明的币种分别记录。")
     return {
-        "file": name, "path": path, "method": method, "card": card,
+        "file": name, "path": path, "method": method, "card": card, "owner": guess_owner(full_text),
         "account": guess_account("" if method.startswith(("CSV", "Excel")) else full_text, name,
                                  os.path.basename(os.path.dirname(path))),
-        "currency": currency or guess_currency(full_text),
+        "currency": currency,
         "credit_card": credit_card, "txns": txns, "warnings": warnings,
     }

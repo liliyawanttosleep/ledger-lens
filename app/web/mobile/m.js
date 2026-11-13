@@ -225,7 +225,7 @@ function openAdd() {
     <div class="seg" id="aKind">${Object.entries(KIND).map(([k, v]) => `<button data-k="${k}" class="${k === kind ? 'on' : ''}">${v}</button>`).join('')}</div>
     <div class="two"><label>分类<select class="select" id="aCat">${cats(kind).map(c => `<option value="${c}">${c}</option>`).join('')}</select></label><label>日期<input class="input" id="aDate" type="date" value="${today}"></label></div>
     <label>描述<input class="input" id="aDesc" placeholder="例如：午饭、打车、工资"></label>
-    <div class="two"><label>账户<input class="input" id="aAcc" value="${esc(LS.get('acc', '手机记账'))}"></label><label>币种<select class="select" id="aCur">${[...new Set([S.cur || 'CNY', 'CNY', 'USD', 'HKD', 'EUR', 'GBP'])].map(c => `<option>${c}</option>`).join('')}</select></label></div>
+    <div class="two"><label>账户<input class="input" id="aAcc" value="${esc(LS.get('acc', '手机记账'))}"></label><label>币种<select class="select" id="aCur">${[...new Set([(C() && C().merged ? C().base : S.cur) || 'CNY', 'CNY', 'USD', 'HKD', 'EUR', 'GBP', 'JPY', 'KRW', 'CAD', 'AUD', 'SGD', 'TWD'])].map(c => `<option value="${c}">${c}</option>`).join('')}</select></label></div>
     <button class="btn primary" id="aSave">保存</button></div>`;
   $('#sheet').hidden = false; let k = kind;
   $('#shClose').onclick = () => $('#sheet').hidden = true;
@@ -252,7 +252,10 @@ function render() {
   else if (!a) { const e = pEmpty(), s = pSync(); p = S.data && !a ? { html: pendBanner() + '<p class="muted" style="text-align:center;padding:50px 0">电脑端还没有数据，先在电脑上导入账单，或点右下角 + 记一笔</p>', draw() {} } : { html: e.html + s.html, draw: s.draw }; }
   else p = { overview: pOverview, analysis: pAnalysis, advice: pAdvice, txns: pTxns }[S.tab]();
   const el = $('#content'), keep = S.tab === render.last ? el.scrollTop : 0; render.last = S.tab;
-  el.innerHTML = p.html; el.scrollTop = keep; p.draw();
+  const curs = S.data ? S.data.currencies : [];   // 多种货币：分开看，或看按汇率折算后的合并
+  const curBar = S.tab !== 'sync' && a && curs.length > 1 ? `<div class="seg cur-seg" style="grid-template-columns:repeat(${curs.length},1fr)">${curs.map(x => `<button data-cur="${x.code}" class="${x.code === c.code ? 'on' : ''}">${x.merged ? '合并' : x.code}</button>`).join('')}</div>${c.merged ? `<p class="muted cur-note">全部货币按当前参考汇率折算为 <span data-raw>${c.base}</span></p>` : ''}` : '';
+  el.innerHTML = curBar + p.html; el.scrollTop = keep; p.draw();
+  $$('[data-cur]', el).forEach(e => e.onclick = () => { S.cur = e.dataset.cur; LS.set('cur', S.cur); pick(); render(); });
   $$('[data-go]', el).forEach(e => e.onclick = () => { S.tab = e.dataset.go; render(); });
   $$('[data-drill]', el).forEach(e => e.onclick = () => openDrill(JSON.parse(e.dataset.drill)));
   requestAnimationFrame(() => $$('.ring .fg').forEach(e => e.style.strokeDashoffset = e.dataset.to));

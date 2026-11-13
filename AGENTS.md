@@ -13,7 +13,8 @@ app/
   main.py          入口。pywebview 窗口 + Api 类（界面调用的全部接口）；--selftest / --selftest-sync 用于验证打包结果
   parsers.py       文件 → 交易。三条通路：表格(parse_grid) / 文本行(parse_text_lines) / OCR(parse_ocr_lines)
   categorize.py    关键词分类规则、内部转账关键词
-  transfers.py     入库后的“智能识别”：内部转账、本人姓名、跨账户配对、退货配对、退款冲减、分类传播
+  transfers.py     入库后的“智能识别”：内部转账、本人姓名、跨账户配对、路线记忆 / 疑似确认、退货配对、退款冲减、分类传播
+  fx.py            货币：币种识别（逐笔）、符号、汇率（内置 + 联网更新缓存）、合并视图折算
   analysis.py      月度分析 + 建议引擎（输出给界面的唯一数据结构）
   i18n.py          后端文案模板（分类名、健康分、建议），5 种语言
   store.py         SQLite（%APPDATA%\LedgerAssistant\data.db），含字段迁移
@@ -37,6 +38,11 @@ assets/            图标与生成脚本
 - **建议文案**在 `app/i18n.py` 的 `ADV` 里按 key 分语言写，`analysis._advice` 只传 key 和参数。
 - **`flow`（`in` / `out`）是资金方向**，kind 变成 `transfer` 后仍保留；**`pair_id`** 指向另一账户里配对上的那笔。
   `transfers.reclassify()` 每次导入后对全库重跑（新账单与历史账单核对），不要改成只处理新导入的记录。
+- **每笔交易自带 `currency`**（解析时逐笔写明的币种放在 `cur`，否则用整份文件的币种）。统计默认按币种分开。
+  “合并”是伪币种 `ALL`（`fx.ALL`），只存在于接口参数里，**永远不写进数据库**；合并时由 `main._txns("ALL")` 现算，
+  折算后的记录带 `orig_amount / orig_currency`，编辑时必须用原币金额。汇率用“当前参考汇率”，不是交易当日汇率。
+- **内部转账分两档**：高把握的在 `transfers.reclassify()` 里自动标；拿不准的只进 `transfers.suggestions()` 让用户确认，
+  用户的决定存在设置项 `transfer_routes`（描述签名 → self / other）。不要把打分规则直接改成自动标记。
 - **用户手动改过类型的交易会被锁定**（`locked=1`），`transfers.reclassify()` 不再改它。
 - **隐私**：`samples/` 只能放虚构数据；真实账单、数据库、用户姓名不得进仓库。提交用 GitHub noreply 邮箱。
 - 表结构变化要在 `store.init()` 里做 `ALTER TABLE` 迁移，不能假设是新库。

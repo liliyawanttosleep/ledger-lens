@@ -11,9 +11,11 @@
 用户手动改过类型的交易会被锁定，不再自动改动。
 """
 import datetime as dt
+import json
 import re
 from collections import Counter, defaultdict
 
+import fx
 import store
 from categorize import TRANSFER_CATEGORY, categorize, is_transfer
 
@@ -107,6 +109,118 @@ def _zelle_other(desc: str, names: list) -> bool:
     return not any(n in who or who in n for n in names)
 
 
+_OWN_ACCT = re.compile(
+    r"\b(?:to|from)\s+(?:my\s+|your\s+|own\s+)?(?:checking|savings|chk|sav|share|money market|mma|brokerage|investment)\b"
+    r"|\bbetween (?:my|your|own) accounts\b|\b(?:to|from) (?:my|own) account\b|\bown account\b|\bself[- ]transfer\b"
+    r"|本人账户|本人帐户|我的账户|自己的账户|转给自己|同名账户|同名帐户|本人同名|名下账户|本人卡", re.I)
+_TAIL_CTX = re.compile(r"(?:尾号|ending(?: in)?|x{2,}|\*{2,}|\.{3,}|#|\bchk|\bsav|\bcrd|\bcard|\bacct|\baccount|卡|账户|帐户)"
+                       r"\s*[:：]?\s*(\d{4})(?!\d)", re.I)
+_MOVE_CTX = re.compile(r"transfer|trnsfr|xfer|payment|pmt\b|转账|还款|转入|转出|汇款|划转", re.I)
+_PURCHASE = re.compile(r"purchase|\bpos\b|消费|购物", re.I)
+
+
+def _tails(card) -> set:
+    return set(re.findall(r"(?<!\d)\d{4}(?!\d)", card or ""))
+
+
+def own_account(t, all_tails: set) -> bool:
+    """描述里写明了是转到 / 来自自己的另一个账户：
+    “transfer to savings”“转入本人账户”，或者点名了用户另一张卡的尾号（“转账至尾号1234”“payment to card ending 9999”）。"""
+    d = t.get("desc") or ""
+    if _PURCHASE.search(d):
+        return False
+    if _OWN_ACCT.search(d):
+        return True
+    others = all_tails - _tails(t.get("card"))
+    return bool(others and _MOVE_CTX.search(d) and any(m[1] in others for m in _TAIL_CTX.finditer(d)))
+
+
+# ---------------------------------------------------------------- 转账路线：用户确认过的记忆
+def routes() -> dict:
+    """{描述签名: "self" | "other"}。用户在“疑似内部转账”里做过的决定，长期有效。"""
+    try:
+        return json.loads(store.get_setting("transfer_routes", "") or "{}")
+    except ValueError:
+        return {}
+
+
+def decide_route(s: str, is_self) -> int:
+    """记住一条路线是不是自己账户之间的转账，并立刻套用到全库。is_self=None 表示撤销决定。"""
+    r = routes()
+    if is_self is None:
+        r.pop(s, None)
+    else:
+        r[s] = "self" if is_self else "other"
+    store.set_setting("transfer_routes", json.dumps(r, ensure_ascii=False))
+    if not is_self:  # 改口了：把之前按这条路线自动标成内部转账、且没有配对的记录还原成收支
+        for t in store.all_transactions():
+            if t["kind"] == "transfer" and t["category"] == TRANSFER_CATEGORY and not t.get("locked") \
+                    and not t.get("pair_id") and t.get("flow") in ("in", "out") and sig(t["desc"]) == s \
+                    and not is_transfer(t["desc"]):
+                kind = "income" if t["flow"] == "in" else "expense"
+                store.update_transaction(t["id"], {"kind": kind, "category": categorize(t["desc"], kind)})
+    return reclassify()
+
+
+def suggestions(limit: int = 12) -> list:
+    """拿不准、需要用户确认的“疑似内部转账”。按同一条路线（描述签名）归组，用通用信号打分：
+    有来有往、次数多、每月都有、金额多为整数、描述里带本人名字的一部分、点名了别的银行或账户尾号。
+    只有高把握的才自动标记（见 reclassify）；这里的只提问，不改数据。"""
+    pool = store.all_transactions()
+    names, decided = owner_names(), routes()
+    name_parts = {w for n in names for w in n.split() if len(w) >= 3 or re.search(r"[一-鿿]{2,}", w)}
+    groups = defaultdict(list)
+    for t in pool:
+        if t.get("locked") or t["kind"] not in ("income", "expense") or t["category"] not in _VAGUE:
+            continue
+        if not _HINT.search(t["desc"]) or (names and _zelle_other(t["desc"], names)):
+            continue
+        s = sig(t["desc"])
+        if s and s not in decided:
+            groups[(s, t["currency"])].append(t)
+    out = []
+    for (s, cur), g in groups.items():
+        n = len(g)
+        ins = sum(1 for t in g if flow(t) == "in")
+        months = len({t["date"][:7] for t in g})
+        rnd = sum(1 for t in g if round(t["amount"] * 100) % 1000 == 0) / n
+        d = g[0]["desc"].lower()
+        reasons, score = [], 0
+        if ins and n - ins:
+            score += 2
+            reasons.append("both")
+        if n >= 3:
+            score += 1
+            reasons.append("freq")
+        if months >= 3:
+            score += 1
+            reasons.append("monthly")
+        if n >= 2 and rnd >= 0.6:
+            score += 1
+            reasons.append("round")
+        if any(w in d for w in name_parts):
+            score += 2
+            reasons.append("name")
+        if (banks_in(d) - banks_in(g[0].get("account"))) or _TAIL_CTX.search(d):
+            score += 1
+            reasons.append("bank")
+        if score >= 3:
+            dates = sorted(t["date"] for t in g)
+            out.append({"sig": s, "desc": g[0]["desc"], "currency": cur, "count": n, "ins": ins, "outs": n - ins,
+                        "months": months, "total": round(sum(t["amount"] for t in g), 2), "score": score,
+                        "accounts": sorted({t.get("account") or "" for t in g} - {""}), "reasons": reasons,
+                        "first": dates[0], "last": dates[-1]})
+    out.sort(key=lambda x: (-x["score"], -x["total"]))
+    return out[:limit]
+
+
+def add_owner(name: str):
+    """账单抬头里读到的户名 / 持卡人，记为本人姓名。"""
+    name = re.sub(r"\s+", " ", name or "").strip()
+    if len(name) >= 2 and name.lower() not in owner_names():
+        set_owner_names(", ".join([store.get_setting("owner_names", "") or "", name]).strip(", "))
+
+
 def _key(t):
     return (t.get("account") or "") + "|" + (t.get("card") or "")
 
@@ -195,9 +309,12 @@ def reclassify() -> int:
     def is_tr(t):
         return (t["kind"] == "transfer" and t["category"] == TRANSFER_CATEGORY) or t["id"] in mark
 
-    # 1 + 2：关键词、本人姓名、对手方是银行 / 券商
+    # 1 + 2：关键词、本人姓名、对手方是银行 / 券商、写明是自己的另一个账户（含另一张卡的尾号）、用户确认过的路线
+    all_tails = set().union(*(_tails(t.get("card")) for t in pool)) if pool else set()
+    decided = routes()
     for t in pool:
-        if free(t) and (is_transfer(t["desc"]) or is_self(t["desc"], names) or is_bank_move(t["desc"])):
+        if free(t) and (is_transfer(t["desc"]) or is_self(t["desc"], names) or is_bank_move(t["desc"])
+                        or own_account(t, all_tails) or decided.get(sig(t["desc"])) == "self"):
             mark.add(t["id"])
 
     # 3：跨账户配对（按币种、金额分组）
@@ -253,11 +370,33 @@ def reclassify() -> int:
                     link(o, i)
                     break
 
+    def pair_fx():
+        # 3c 跨币种（如人民币账户汇出、美元账户收到）：按当前参考汇率折算后相差 ≤3%，两头都带转账字样，金额不小
+        table = fx.rates()
+        cand = [t for t in pool if t["id"] not in linked and _HINT.search(t["desc"]) and (is_tr(t) or candidate(t))]
+        ins = [t for t in cand if flow(t) == "in"]
+        for o in sorted((t for t in cand if flow(t) == "out"), key=lambda t: t["date"]):
+            if o["id"] in linked or o["amount"] * fx.rate(o["currency"], "USD", table) < 100:
+                continue
+            best = None
+            for i in ins:
+                if i["id"] in linked or i["currency"] == o["currency"] or not compatible(o, i):
+                    continue
+                if abs(o["amount"] * fx.rate(o["currency"], i["currency"], table) - i["amount"]) > 0.03 * i["amount"]:
+                    continue
+                if best is None or _days(o["date"], i["date"]) < _days(o["date"], best["date"]):
+                    best = i
+            if best:
+                mark.update(x["id"] for x in (o, best) if not is_tr(x))
+                link(o, best)
+
     pair()
+    if len({t["currency"] for t in pool}) > 1:
+        pair_fx()
 
     # 4 记忆：某条转账路线（描述签名）已经配上过两次，或被用户手动确认过，
     #   以后同样描述的记录即使另一头的账单还没导入，也直接算内部转账。用户手动改回收支的签名永不套用。
-    seen, veto = Counter(), set()
+    seen, veto = Counter(), {s for s, v in decided.items() if v == "other"}
     for t in pool:
         s = sig(t["desc"])
         if not s:

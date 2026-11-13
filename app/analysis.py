@@ -12,10 +12,11 @@ import datetime as dt
 import re
 from collections import defaultdict
 
+import fx
 import i18n
 from categorize import FLEXIBLE
 
-SYMBOLS = {"CNY": "¥", "USD": "$", "HKD": "HK$", "EUR": "€", "GBP": "£"}
+SYMBOLS = fx.SYMBOLS
 FIXED_COST = {"住房物业", "超市日用", "餐饮美食", "交通出行"}
 RETURNED = "已退货"
 
@@ -400,7 +401,8 @@ def _advice(lang, sym, currency, sr, income, expense, net, exp_cats, inc_cats, c
                 total=money(total), names=names, year=money(total * 12))
 
     # 6. 小额高频
-    small_cap = 30 if currency == "CNY" else (8 if currency in ("USD", "EUR", "GBP") else 60)
+    small_cap = 30 if currency == "CNY" else (8 if currency in ("USD", "EUR", "GBP") else
+                                              _nice(8 * fx.BUILTIN["rates"].get(currency, 1)))  # 约 8 美元
     small = [t for t in exp_txns if t["amount"] <= small_cap
              and t["category"] in ("餐饮美食", "购物消费", "娱乐休闲", "超市日用", "其他支出")]
     if len(small) >= 15 and expense:
