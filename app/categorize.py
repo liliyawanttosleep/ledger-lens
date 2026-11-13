@@ -28,7 +28,8 @@ TRANSFER_KEYWORDS = [
     "transfer from checking", "transfer from savings", "internal transfer", "balance transfer",
     "applecard gsbank", "chase credit crd", "discover e-payment", "capital one crcardpmt",
     "amex epayment", "citi card online", "barclaycard", "wealthfront", "robinhood", "fidelity",
-    "vanguard", "schwab", "coinbase",
+    "vanguard", "schwab", "coinbase", "fid bkg svc", "card transfer credit", "card transfer debit",
+    "external transfer deposit", "external transfer withdrawal",
 ]
 
 EXPENSE_RULES = [
@@ -105,9 +106,9 @@ INCOME_RULES = [
     ("奖金补贴", ["奖金", "绩效", "年终", "补贴", "津贴", "奖学金", "助学金", "补助", "bonus", "scholarship", "fellowship",
               "grant", "award", "allowance", "assistantship"]),
     ("投资理财", ["利息", "结息", "分红", "股息", "收益", "理财", "基金赎回", "赎回", "interest paid", "interest payment",
-              "interest earned", "dividend", "capital gain", "apy"]),
+              "interest earned", "adjusted interest", "interest", "dividend", "capital gain", "apy"]),
     ("退款报销", ["退款", "退货", "退回", "报销", "返现", "退税", "refund", "reimburse", "return", "cashback",
-              "cash back", "cashreward", "cash reward", "stmt credit", "statement credit", "rwd promo", "rebate", "tax ref", "irs treas", "reversal", "credit adj"]),
+              "cash back", "cashreward", "cash reward", "stmt credit", "statement credit", "rwd promo", "rebate", "tax ref", "irs treas", "reversal", "credit adj", "fee waived", "waived", "fee refund", "return web authorized"]),
     ("转账收入", ["转入", "收款", "汇入", "转账", "红包", "二维码收款", "zelle payment from", "zelle from", "venmo",
               "cash app", "wire in", "incoming wire", "remittance", "transfer from", "deposit"]),
 ]

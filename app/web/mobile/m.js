@@ -16,8 +16,9 @@ const A = () => { const c = C(); return c && c.analyses[S.month]; };
 const sym = () => (C() || {}).symbol || '¥';
 const num = (v, d = 2) => Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
 const money = (v, d = 2) => (v < 0 ? '−' : '') + sym() + num(Math.abs(v), d);
-const mlabel = m => `${m.slice(0, 4)}年${+m.slice(5)}月`;
-const KIND = { expense: '支出', income: '收入', transfer: '内部转账' };
+const mlabel = m => I18N.month(m);
+const KIND = { expense: '支出', income: '收入', transfer: '不计收支' };
+const SIGN = { income: '+', expense: '−', refund: '↩ ', transfer: '' };
 const LEVEL = { alert: ['需立即关注', 'alert'], warn: ['建议调整', 'alert'], info: ['提示', 'info'], good: ['保持', 'check'] };
 const TITLES = { overview: '本月概览', analysis: '收支分析', advice: '开销建议', txns: '交易明细', sync: '同步' };
 function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('on'), 2400); }
@@ -42,7 +43,7 @@ async function sync(manual) {
       await call('/api/push', { body: { txns: S.pending } });
       S.pending = []; LS.set('pending', S.pending);
     }
-    S.data = await call('/api/sync', { timeout: 15000 }); LS.set('data', S.data);
+    S.data = await call('/api/sync?lang=' + I18N.lang, { timeout: 15000 }); LS.set('data', S.data);
     S.online = true; pick(); setStatus('ok', `已同步 · ${S.data.device} · ${S.data.synced_at.slice(5)}`);
     if (manual) toast('同步完成'); render(); return true;
   } catch (e) {
@@ -71,16 +72,16 @@ function colorMap(names) {
 function chart(id, option) {
   const el = document.getElementById(id); if (!el) return;
   const c = echarts.init(el, null, { renderer: 'svg' });
-  c.setOption(Object.assign({
+  c.setOption(I18N.deep(Object.assign({
     animationDuration: 500, textStyle: { fontFamily: 'system-ui, sans-serif', color: css('--ink-2') },
     grid: { left: 4, right: 8, top: 30, bottom: 2, containLabel: true },
     tooltip: { trigger: 'axis', confine: true, backgroundColor: css('--surface'), borderColor: css('--line-2'), textStyle: { color: css('--ink'), fontSize: 12.5 }, extraCssText: 'border-radius:12px;', valueFormatter: v => v == null ? '—' : money(v) },
     legend: { top: 0, right: 0, icon: 'roundRect', itemWidth: 9, itemHeight: 9, itemGap: 12, textStyle: { color: css('--ink-2'), fontSize: 11.5 } },
-  }, option));
+  }, option)));
   S.charts[id] = c; return c;
 }
 const axC = (data, extra = {}) => Object.assign({ type: 'category', data, axisLine: { lineStyle: { color: css('--axis') } }, axisTick: { show: false }, axisLabel: { color: css('--ink-3'), fontSize: 11 } }, extra);
-const axV = () => ({ type: 'value', splitNumber: 4, splitLine: { lineStyle: { color: css('--grid') } }, axisLabel: { color: css('--ink-3'), fontSize: 11, formatter: v => Math.abs(v) >= 10000 ? (v / 10000) + '万' : Math.abs(v) >= 1000 ? (v / 1000) + 'k' : v } });
+const axV = () => ({ type: 'value', splitNumber: 4, splitLine: { lineStyle: { color: css('--grid') } }, axisLabel: { color: css('--ink-3'), fontSize: 11, formatter: v => I18N.big(v) } });
 window.addEventListener('resize', () => Object.values(S.charts).forEach(c => c.resize()));
 function donut(id, rows, label, kind) {
   const pos = rows.filter(r => r.amount > 0), top = pos.slice(0, 6), rest = pos.slice(6);
@@ -146,7 +147,7 @@ function pAnalysis() {
     draw() {
       d.draw(); const cm = colorMap(ct.series.map(s => s.name));
       chart('c-ct', { grid: { left: 4, right: 8, top: 54, bottom: 2, containLabel: true }, legend: { top: 0, left: 0, icon: 'roundRect', itemWidth: 9, itemHeight: 9, itemGap: 10, textStyle: { color: css('--ink-2'), fontSize: 11.5 } }, xAxis: axC(ct.months.map(m => +m.slice(5) + '月')), yAxis: axV(), series: ct.series.map(s => ({ name: s.name, type: 'bar', stack: 'a', data: s.data, barMaxWidth: 26, itemStyle: { color: cm[s.name], borderColor: css('--surface'), borderWidth: 1 } })) });
-      chart('c-wd', { legend: { show: false }, grid: { left: 4, right: 8, top: 10, bottom: 2, containLabel: true }, xAxis: axC(a.weekday.map(w => w.name)), yAxis: axV(), series: [{ name: '支出', type: 'bar', barMaxWidth: 22, data: a.weekday.map((w, i) => ({ value: w.amount, itemStyle: { color: i >= 5 ? css('--s2') : css('--s1'), borderRadius: [4, 4, 0, 0] } })) }] });
+      chart('c-wd', { legend: { show: false }, grid: { left: 4, right: 8, top: 10, bottom: 2, containLabel: true }, xAxis: axC(a.weekday.map((_, i) => I18N.weekday(i))), yAxis: axV(), series: [{ name: '支出', type: 'bar', barMaxWidth: 22, data: a.weekday.map((w, i) => ({ value: w, itemStyle: { color: i >= 5 ? css('--s2') : css('--s1'), borderRadius: [4, 4, 0, 0] } })) }] });
     } };
 }
 function pAdvice() {
@@ -165,7 +166,7 @@ function pTxns() {
   const days = {}; rows.forEach(t => (days[t.date] = days[t.date] || []).push(t));
   return { html: `<input class="input" id="q" placeholder="搜索描述、分类、金额…" value="${esc(S.q)}" style="margin-bottom:6px">
     ${Object.keys(days).map(d => `<div class="day"><span>${+d.slice(5, 7)}月${+d.slice(8)}日</span><span class="num">支出 ${money(days[d].filter(t => t.kind === 'expense').reduce((s, t) => s + t.amount, 0))}</span></div>
-      <div class="card" style="padding:4px 14px;margin-bottom:0"><div class="rows">${days[d].map(t => `<div class="row-i"${t.pend ? ` data-cid="${t.cid}"` : ''}><div class="t">${esc(t.desc)}</div><div class="a num ${t.kind === 'income' ? 'in' : t.kind === 'transfer' ? 'muted' : ''}">${t.kind === 'income' ? '+' : t.kind === 'expense' ? '−' : ''}${sym()}${num(t.amount)}</div><div class="s" style="grid-column:1/3"><span class="tag">${esc(t.category)}</span> ${esc(t.account || '')}${t.card ? ' · ' + esc(t.card) : ''}${t.pend ? ' · <span style="color:var(--accent)">待同步（点按可撤销）</span>' : ''}</div></div>`).join('')}</div></div>`).join('') || '<p class="muted" style="text-align:center;padding:40px 0">这个月没有符合条件的交易</p>'}`,
+      <div class="card" style="padding:4px 14px;margin-bottom:0"><div class="rows">${days[d].map(t => `<div class="row-i"${t.pend ? ` data-cid="${t.cid}"` : ''}><div class="t">${esc(t.desc)}</div><div class="a num ${t.kind === 'income' ? 'in' : t.kind === 'transfer' ? 'muted' : ''}">${SIGN[t.kind] || ''}${sym()}${num(t.amount)}</div><div class="s" style="grid-column:1/3"><span class="tag">${esc(t.category)}</span> ${esc(t.account || '')}${t.card ? ' · ' + esc(t.card) : ''}${t.pend ? ' · <span style="color:var(--accent)">待同步（点按可撤销）</span>' : ''}</div></div>`).join('')}</div></div>`).join('') || '<p class="muted" style="text-align:center;padding:40px 0">这个月没有符合条件的交易</p>'}`,
     draw() {
       const i = $('#q'); i.oninput = () => { S.q = i.value; const pos = i.selectionStart; render(); const n = $('#q'); n.focus(); n.setSelectionRange(pos, pos); };
       $$('[data-cid]').forEach(e => e.onclick = () => { if (!confirm('撤销这笔还没同步的记账？')) return; S.pending = S.pending.filter(t => t.cid !== e.dataset.cid); LS.set('pending', S.pending); render(); });
@@ -185,11 +186,13 @@ function pSync() {
       <label>配对码<input class="input" id="tok" autocapitalize="characters" maxlength="8" placeholder="电脑端“手机同步”页上的 8 位码" value="${esc(c.token || '')}" style="letter-spacing:.14em"></label>
       <button class="btn" id="saveCfg">保存并连接</button></div></div>
     ${web && deep ? `<div class="card"><h3>安卓 App</h3><p class="muted" style="font-size:13.5px;margin-bottom:12px">装了 App 的话，点下面的按钮把这台电脑的配对信息带进 App。App 会保存数据，离开电脑也能查看。</p><a class="btn" href="${deep}" style="text-decoration:none;color:inherit">在 App 中打开</a></div>` : ''}
+    <div class="card"><h3>语言</h3><select class="select" id="mLang">${I18N.LANGS.map(([c, n]) => `<option value="${c}"${c === I18N.lang ? ' selected' : ''}>${n}</option>`).join('')}</select></div>
     <div class="card help"><p><b>怎么连？</b>电脑上打开“流水分析助手 → 手机同步 → 开启”，手机和电脑连同一个 Wi-Fi，${IN_APP ? '填入页面上显示的地址和配对码。' : '用相机扫二维码即可。'}</p>
       <p><b>离开电脑还能用吗？</b>${IN_APP ? '能。App 显示上次同步的数据；在外面记的账会先存在手机里，回到同一 Wi-Fi 后自动传回电脑。' : '浏览器版需要连着电脑才能打开；想离线查看请安装安卓 App。'}</p>
       <p><b>数据安全</b>数据只在你的手机和电脑之间通过家里的局域网传输，不经过任何服务器。</p></div>`,
     draw() {
       $('#syncNow').onclick = () => sync(true);
+      $('#mLang').onchange = e => { LS.set('lang', e.target.value); location.reload(); };
       $('#saveCfg').onclick = () => { const h = normHost($('#host').value), t = $('#tok').value.trim().toUpperCase(); if (!h || !t) return toast('请填写地址和配对码'); S.cfg = { host: h, token: t }; LS.set('cfg', S.cfg); sync(true); };
     } };
 }
@@ -207,7 +210,7 @@ function openDrill(f) {
   $('#sheetCard').innerHTML = `<h2>${esc(f.title || f.category || f.merchant || f.account)}<button id="shClose">关闭</button></h2>
     <p class="muted" style="font-size:13px;margin:-8px 0 12px">${mlabel(S.month)} · ${rows.length} 笔 · 合计 <b class="num" style="color:var(--ink)">${money(total)}</b></p>
     <div class="card" style="padding:6px 14px"><div class="rows">${Object.entries(by).sort((a, b) => b[1].amt - a[1].amt).map(([k, v]) => `<div class="row-i"><div class="t">${esc(k)} <span class="s">${v.n} 笔</span></div><div class="a num">${money(v.amt)}</div><div class="track"><i style="width:${total ? v.amt / total * 100 : 0}%;background:linear-gradient(90deg,var(--brand-a),var(--brand-b))"></i></div></div>`).join('')}</div></div>
-    <div class="card" style="padding:4px 14px"><div class="rows">${rows.map(t => `<div class="row-i"><div class="t">${esc(t.desc)}</div><div class="a num ${t.kind === 'income' ? 'in' : ''}">${t.kind === 'income' ? '+' : t.kind === 'expense' ? '−' : ''}${sym()}${num(t.amount)}</div><div class="s" style="grid-column:1/3">${+t.date.slice(5, 7)}月${+t.date.slice(8)}日 · ${esc(src(t))}</div></div>`).join('') || '<p class="muted" style="padding:14px 0">没有记录</p>'}</div></div>`;
+    <div class="card" style="padding:4px 14px"><div class="rows">${rows.map(t => `<div class="row-i"><div class="t" data-raw>${esc(t.desc)}</div><div class="a num ${t.kind === 'income' ? 'in' : ''}">${t.kind === 'income' ? '+' : t.kind === 'expense' ? '−' : ''}${sym()}${num(t.amount)}</div><div class="s" style="grid-column:1/3">${+t.date.slice(5, 7)}月${+t.date.slice(8)}日 · ${esc(src(t))}</div></div>`).join('') || '<p class="muted" style="padding:14px 0">没有记录</p>'}</div></div>`;
   $('#sheet').hidden = false; $('#sheetCard').scrollTop = 0;
   $('#shClose').onclick = () => $('#sheet').hidden = true;
 }
@@ -220,13 +223,13 @@ function openAdd() {
   $('#sheetCard').innerHTML = `<h2>记一笔<button id="shClose">取消</button></h2><div class="form">
     <input class="input amt num" id="aAmt" type="number" inputmode="decimal" step="0.01" placeholder="0.00">
     <div class="seg" id="aKind">${Object.entries(KIND).map(([k, v]) => `<button data-k="${k}" class="${k === kind ? 'on' : ''}">${v}</button>`).join('')}</div>
-    <div class="two"><label>分类<select class="select" id="aCat">${cats(kind).map(c => `<option>${c}</option>`).join('')}</select></label><label>日期<input class="input" id="aDate" type="date" value="${today}"></label></div>
+    <div class="two"><label>分类<select class="select" id="aCat">${cats(kind).map(c => `<option value="${c}">${c}</option>`).join('')}</select></label><label>日期<input class="input" id="aDate" type="date" value="${today}"></label></div>
     <label>描述<input class="input" id="aDesc" placeholder="例如：午饭、打车、工资"></label>
     <div class="two"><label>账户<input class="input" id="aAcc" value="${esc(LS.get('acc', '手机记账'))}"></label><label>币种<select class="select" id="aCur">${[...new Set([S.cur || 'CNY', 'CNY', 'USD', 'HKD', 'EUR', 'GBP'])].map(c => `<option>${c}</option>`).join('')}</select></label></div>
     <button class="btn primary" id="aSave">保存</button></div>`;
   $('#sheet').hidden = false; let k = kind;
   $('#shClose').onclick = () => $('#sheet').hidden = true;
-  $$('#aKind button').forEach(b => b.onclick = () => { k = b.dataset.k; $$('#aKind button').forEach(x => x.classList.toggle('on', x === b)); $('#aCat').innerHTML = cats(k).map(c => `<option>${c}</option>`).join(''); });
+  $$('#aKind button').forEach(b => b.onclick = () => { k = b.dataset.k; $$('#aKind button').forEach(x => x.classList.toggle('on', x === b)); $('#aCat').innerHTML = cats(k).map(c => `<option value="${c}">${c}</option>`).join(''); });
   $('#aSave').onclick = () => {
     const amount = parseFloat($('#aAmt').value);
     if (!(amount > 0)) return toast('请输入金额');
@@ -269,6 +272,8 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) sync
   if (q.has('noanim')) document.head.insertAdjacentHTML('beforeend', '<style>*{animation:none!important;transition:none!important}</style>');
   if (q.get('tab')) S.tab = q.get('tab');
   if (q.get('drill')) setTimeout(() => A() && openDrill({ kind: 'expense', category: q.get('drill') }), 1500);
+  I18N.set(q.get('lang') || LS.get('lang', (navigator.language || 'zh').slice(0, 2)));
+  I18N.walk(document.body);
   readPairing(); pick();
   $$('#tabs button').forEach(b => b.onclick = () => { S.tab = b.dataset.tab; render(); });
   $('#fab').onclick = openAdd;

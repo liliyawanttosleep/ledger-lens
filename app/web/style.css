@@ -350,3 +350,14 @@ input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--accent); c
 .income-entry > svg { width: 22px; height: 22px; color: #17b26a; flex: none; }
 .income-entry b { display: block; font-size: 14.5px; }
 .income-entry span { font-size: 12.5px; color: var(--ink-3); }
+
+/* 语言选择 / 不计收支条 */
+.lang-pick { display: flex; align-items: center; gap: 10px; padding: 7px 12px; color: var(--ink-2); border-radius: 10px; }
+.lang-pick:hover { background: var(--line); }
+.lang-pick svg { width: 17px; height: 17px; flex: none; }
+.lang-pick select { appearance: none; border: 0; background: transparent; outline: 0; cursor: pointer; flex: 1; color: inherit; }
+.excl { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 22px; padding: 12px 18px; margin-bottom: 18px; font-size: 13.5px; }
+.excl a { cursor: pointer; color: var(--ink-2); padding: 3px 0; border-bottom: 1px dashed var(--line-2); }
+.excl a:hover { color: var(--accent); border-color: var(--accent); }
+.excl a b { color: var(--ink); font-weight: 600; margin-right: 4px; }
+.excl em { font-style: normal; color: var(--ink-3); font-size: 12.5px; margin-left: auto; }

@@ -55,7 +55,7 @@ def local_ip() -> str:
         s.close()
 
 
-def build_payload() -> dict:
+def build_payload(lang: str = "zh") -> dict:
     """打包给手机的全部数据：每个币种近 12 个月的完整分析 + 近期明细。"""
     txns = store.all_transactions()
     by_cur = {}
@@ -66,7 +66,7 @@ def build_payload() -> dict:
         months = analysis.months_available(rows)
         currencies.append({
             "code": code, "symbol": analysis.SYMBOLS.get(code, code + " "), "months": months,
-            "analyses": {m: analysis.analyze(rows, m, code) for m in months[-12:]},
+            "analyses": {m: analysis.analyze(rows, m, code, lang) for m in months[-12:]},
             "txns": [{k: t[k] for k in ("id", "date", "amount", "kind", "category", "desc", "account", "card")}
                      for t in rows[:3000]],
         })
@@ -88,7 +88,7 @@ def accept_push(items: list) -> int:
             kind = it["kind"]
         except (KeyError, ValueError, TypeError):
             continue
-        if amt <= 0 or kind not in ("income", "expense", "transfer"):
+        if amt <= 0 or kind not in ("income", "expense", "transfer", "refund"):
             continue
         desc = str(it.get("desc") or "(无描述)")[:120]
         txns.append({"date": d, "amount": amt, "kind": kind, "desc": desc,
@@ -146,7 +146,7 @@ def _make_app(web_dir: str) -> Bottle:
     @app.get("/api/sync")
     def sync():
         auth()
-        return js(build_payload())
+        return js(build_payload(request.query.get("lang") or "zh"))
 
     @app.post("/api/push")
     def push():

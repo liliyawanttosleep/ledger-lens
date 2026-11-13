@@ -15,8 +15,9 @@ const icon = (n, cls = '') => `<svg class="${cls}"><use href="#i-${n}"/></svg>`;
 const sym = () => (S.a && S.a.symbol) || (S.boot.currencies.find(c => c.code === S.currency) || {}).symbol || '¥';
 const num = (v, d = 2) => Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
 const money = (v, d = 2) => (v < 0 ? '−' : '') + sym() + num(Math.abs(v), d);
-const monthLabel = m => `${m.slice(0, 4)}年${+m.slice(5)}月`;
-const KIND = { income: '收入', expense: '支出', transfer: '内部转账' };
+const monthLabel = m => I18N.month(m);
+const KIND = { income: '收入', expense: '支出', refund: '退款冲减', transfer: '不计收支' };
+const SIGN = { income: '+', expense: '−', refund: '↩ ', transfer: '' };
 const LEVEL = { alert: ['需立即关注', 'alert'], warn: ['建议调整', 'alert'], info: ['提示', 'info'], good: ['保持', 'check'] };
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 
@@ -45,11 +46,11 @@ function chart(id, option) {
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow', shadowStyle: { color: 'rgba(128,128,128,.08)' } }, backgroundColor: css('--surface'), borderColor: css('--line-2'), borderWidth: 1, padding: [10, 14], textStyle: { color: css('--ink'), fontSize: 13 }, extraCssText: 'border-radius:12px;box-shadow:0 12px 32px -12px rgba(0,0,0,.3);', valueFormatter: v => v == null ? '—' : money(v) },
     legend: { top: 0, right: 0, icon: 'roundRect', itemWidth: 10, itemHeight: 10, itemGap: 16, textStyle: { color: ink2, fontSize: 12.5 } },
   };
-  c.setOption(Object.assign(base, option));
+  c.setOption(I18N.deep(Object.assign(base, option)));
   S.charts[id] = c; return c;
 }
 const axisCat = (data, extra = {}) => Object.assign({ type: 'category', data, axisLine: { lineStyle: { color: css('--axis') } }, axisTick: { show: false }, axisLabel: { color: css('--ink-3'), fontSize: 12 } }, extra);
-const axisVal = (extra = {}) => Object.assign({ type: 'value', splitLine: { lineStyle: { color: css('--grid') } }, axisLabel: { color: css('--ink-3'), fontSize: 12, formatter: v => Math.abs(v) >= 10000 ? (v / 10000) + '万' : Math.abs(v) >= 1000 ? (v / 1000) + 'k' : v } }, extra);
+const axisVal = (extra = {}) => Object.assign({ type: 'value', splitLine: { lineStyle: { color: css('--grid') } }, axisLabel: { color: css('--ink-3'), fontSize: 12, formatter: v => I18N.big(v) } }, extra);
 window.addEventListener('resize', () => Object.values(S.charts).forEach(c => c.resize()));
 
 /* ───────── 明细钻取：点分类 / 商户 / 账户，看每一笔来自哪家银行哪张卡 ───────── */
@@ -72,7 +73,7 @@ async function drill(f) {
       <div class="src-grid">${srcs.map(([k, v]) => `<div class="src"><span>${esc(k)}</span><b class="num">${money(v.amt)}</b><div class="track"><i style="width:${total ? v.amt / total * 100 : 0}%"></i></div><em class="num">${v.n} 笔 · ${total ? (v.amt / total * 100).toFixed(0) : 0}%</em></div>`).join('')}</div>
       <div class="toolbar" style="margin:14px 0 6px"><b style="font-size:14px">每一笔</b><div class="seg sp" id="drSort"><button data-v="date" class="${DR.sort === 'date' ? 'on' : ''}">按日期</button><button data-v="amount" class="${DR.sort === 'amount' ? 'on' : ''}">按金额</button></div></div>
       <table class="tbl"><thead><tr><th>日期</th><th>商家 / 描述</th><th>分类</th><th>银行 / 账户</th><th>卡片 / 支付方式</th><th class="r">金额</th></tr></thead><tbody>
-      ${rows.map(t => `<tr><td class="num muted">${t.date}</td><td class="desc" style="max-width:300px" title="${esc(t.desc)}">${esc(t.desc)}</td><td><span class="tag">${esc(t.category)}</span></td><td>${esc(t.account || '—')}</td><td class="${t.card ? '' : 'muted'}">${esc(t.card || '未识别')}</td><td class="r num ${t.kind === 'income' ? 'amt-in' : ''}"><b>${t.kind === 'income' ? '+' : t.kind === 'expense' ? '−' : ''}${sym()}${num(t.amount)}</b></td></tr>`).join('') || '<tr><td colspan="6" class="note">没有记录</td></tr>'}</tbody></table>
+      ${rows.map(t => `<tr><td class="num muted">${t.date}</td><td class="desc" style="max-width:300px" title="${esc(t.desc)}">${esc(t.desc)}</td><td><span class="tag">${esc(t.category)}</span></td><td>${esc(t.account || '—')}</td><td class="${t.card ? '' : 'muted'}">${esc(t.card || '未识别')}</td><td class="r num ${t.kind === 'income' ? 'amt-in' : ''}"><b>${SIGN[t.kind]}${sym()}${num(t.amount)}</b></td></tr>`).join('') || '<tr><td colspan="6" class="note">没有记录</td></tr>'}</tbody></table>
     </div>
     <div class="m-foot"><span>卡片信息来自账单里的卡号 / 支付方式；没识别到的可在“交易明细”里补上</span><div><button class="btn" id="drOpen">在交易明细中打开</button><button class="btn primary" data-close>关闭</button></div></div>`);
   $$('#drSort button').forEach(b => b.onclick = () => { DR.sort = b.dataset.v; drill(); });
@@ -95,7 +96,7 @@ function donut(id, rows, label, kind) {
       li.onmouseleave = () => c.dispatchAction({ type: 'downplay', dataIndex: +li.dataset.i });
       li.onclick = () => open(data[+li.dataset.i].name);
     });
-    c.on('click', p => open(p.name));
+    c.on('click', p => open(data[p.dataIndex].name));
   };
   return { html: data.length ? html : '<div class="note">本月没有记录</div>', draw: data.length ? draw : () => {} };
 }
@@ -123,6 +124,13 @@ function scoreParts(parts) {
 function animateRings() { requestAnimationFrame(() => $$('.ring .fg').forEach(e => e.style.strokeDashoffset = e.dataset.to)); }
 
 /* ───────── 页面：概览 ───────── */
+function excludedStrip(a) {
+  const e = a.excluded, items = [];
+  if (e.transfer.count) items.push(`<a data-drill='${esc(JSON.stringify({ kind: 'transfer', category: '内部转账', title: '内部转账' }))}'><b>内部转账</b> ${e.transfer.count} 笔 · <span class="num">${money(e.transfer.amount, 0)}</span></a>`);
+  if (e.returned.count) items.push(`<a data-drill='${esc(JSON.stringify({ kind: 'transfer', category: '已退货', title: '已退货' }))}'><b>已退货</b> ${e.returned.count} 笔 · <span class="num">${money(e.returned.amount, 0)}</span></a>`);
+  if (e.refund.count) items.push(`<a data-drill='${esc(JSON.stringify({ kind: 'refund', title: '退款冲减' }))}'><b>退款冲减</b> ${e.refund.count} 笔 · <span class="num">${money(e.refund.amount, 0)}</span></a>`);
+  return items.length ? `<div class="card excl"><span class="pill info">${icon('info')}不计入收支</span>${items.join('')}<em>这些记录既不是收入也不是开销，点击可逐笔核对</em></div>` : '';
+}
 function pageOverview() {
   const a = S.a, k = a.kpi, prevTxt = k.prev_month ? '较上月' : '';
   const sr = k.savings_rate;
@@ -133,12 +141,13 @@ function pageOverview() {
     <div class="card kpi hero"><label>本月结余</label><div class="v num"><small>${k.net < 0 ? '−' : ''}${sym()}</small>${num(Math.abs(k.net))}</div>
       <div class="d">${sr == null ? '未导入收入，暂无储蓄率' : `储蓄率 <span class="delta">${sr}%</span>`}</div></div>
     <div class="card kpi" style="--dot:var(--s1)"><label>收入</label><div class="v num"><small>${sym()}</small>${num(k.income)}</div>
-      <div class="d">${delta(k.income_change, true)} ${k.income_change != null ? prevTxt : k.income_count + ' 笔'}</div></div>
+      <div class="d">${delta(k.income_change, true)} ${k.salary ? `<span>其中工资 <b class="num" style="color:var(--ink)">${money(k.salary, 0)}</b></span>` : (k.income_change != null ? prevTxt : k.income_count + ' 笔')}</div></div>
     <div class="card kpi" style="--dot:var(--s2)"><label>支出</label><div class="v num"><small>${sym()}</small>${num(k.expense)}</div>
       <div class="d">${delta(k.expense_change, false)} ${k.expense_change != null ? prevTxt : k.expense_count + ' 笔'}</div></div>
     <div class="card kpi" style="--dot:var(--s3)"><label>日均支出</label><div class="v num"><small>${sym()}</small>${num(k.daily_avg)}</div>
       <div class="d">共 ${k.expense_count} 笔支出${k.is_current ? ` · 已过 ${k.days_elapsed} 天` : ''}</div></div>
   </div>
+  ${excludedStrip(a)}
   <div class="grid g32">
     <div class="card"><div class="card-h"><h3>支出构成</h3><span>点击分类查看每一笔</span></div>${d1.html}</div>
     <div class="card"><div class="card-h"><h3>财务健康</h3><a data-go="advice">全部建议 →</a></div>
@@ -211,15 +220,15 @@ function pageAnalysis() {
     if (hasAvg) ser.push({ name: `近 ${k.hist_months} 月均值`, type: 'bar', data: rows.map(r => r.avg3), barMaxWidth: 12, itemStyle: { color: css('--s-other'), borderRadius: [0, 4, 4, 0] } });
     $('#c-cmp').style.height = Math.max(220, rows.length * 38 + 70) + 'px';
     const cmp = chart('c-cmp', { xAxis: axisVal(), yAxis: axisCat(rows.map(r => r.name), { axisLabel: { color: css('--ink-2'), fontSize: 12.5 } }), series: ser });
-    cmp.on('click', p => drill({ kind: 'expense', category: p.name }));
+    cmp.on('click', p => drill({ kind: 'expense', category: rows[p.dataIndex].name }));
     const ct = a.cat_trend, cm = colorMap(ct.series.map(s => s.name));
     chart('c-ct', { xAxis: axisCat(ct.months.map(m => m.slice(2).replace('-', '/'))), yAxis: axisVal(),
       series: ct.series.map(s => ({ name: s.name, type: 'bar', stack: 'a', data: s.data, barMaxWidth: 34, itemStyle: { color: cm[s.name], borderColor: css('--surface'), borderWidth: 1 } })) });
     chart('c-day', { legend: { show: false }, xAxis: axisCat(a.daily.days, { axisLabel: { color: css('--ink-3'), interval: 4 } }), yAxis: axisVal(),
       tooltip: { trigger: 'axis', formatter: ps => `<b>${+S.month.slice(5)}月${ps[0].axisValue}日</b><br>支出　<b>${money(ps[0].value)}</b>` },
       series: [{ type: 'bar', data: a.daily.daily, barMaxWidth: 12, itemStyle: { color: css('--s2'), borderRadius: [3, 3, 0, 0] } }] });
-    chart('c-wd', { legend: { show: false }, xAxis: axisCat(a.weekday.map(w => w.name)), yAxis: axisVal(),
-      series: [{ name: '支出', type: 'bar', data: a.weekday.map((w, i) => ({ value: w.amount, itemStyle: { color: i >= 5 ? css('--s2') : css('--s1') } })), barMaxWidth: 30, itemStyle: { borderRadius: [4, 4, 0, 0] } }] });
+    chart('c-wd', { legend: { show: false }, xAxis: axisCat(a.weekday.map((_, i) => I18N.weekday(i))), yAxis: axisVal(),
+      series: [{ name: '支出', type: 'bar', data: a.weekday.map((w, i) => ({ value: w, itemStyle: { color: i >= 5 ? css('--s2') : css('--s1') } })), barMaxWidth: 30, itemStyle: { borderRadius: [4, 4, 0, 0] } }] });
   } };
 }
 
@@ -261,13 +270,13 @@ function pageAdvice() {
     const bud = S.charts['c-bud'] = chart('c-bud', { xAxis: axisVal(), yAxis: axisCat(rows.map(r => r.name), { axisLabel: { color: css('--ink-2'), fontSize: 12.5 } }),
       series: [{ name: '本月实际', type: 'bar', data: rows.map(r => r.current), barMaxWidth: 12, itemStyle: { color: css('--s2'), borderRadius: [0, 4, 4, 0] } },
         { name: '建议预算', type: 'bar', data: rows.map(r => r.suggested), barMaxWidth: 12, itemStyle: { color: css('--s3'), borderRadius: [0, 4, 4, 0] } }] });
-    bud.on('click', p => drill({ kind: 'expense', category: p.name }));
+    bud.on('click', p => drill({ kind: 'expense', category: rows[p.dataIndex].name }));
   } };
 }
 
 /* ───────── 页面：交易明细 ───────── */
-const catOptions = (kind, cur) => (kind === 'income' ? S.boot.income_categories : kind === 'transfer' ? [S.boot.transfer_category] : S.boot.expense_categories)
-  .map(c => `<option${c === cur ? ' selected' : ''}>${c}</option>`).join('');
+const catOptions = (kind, cur) => (kind === 'income' ? S.boot.income_categories : kind === 'transfer' ? [S.boot.transfer_category, '已退货'] : S.boot.expense_categories)
+  .map(c => `<option value="${c}"${c === cur ? ' selected' : ''}>${c}</option>`).join('');
 const kindOptions = cur => Object.entries(KIND).map(([k, v]) => `<option value="${k}"${k === cur ? ' selected' : ''}>${v}</option>`).join('');
 function filtered() {
   const f = S.filter, q = f.q.trim().toLowerCase();
@@ -281,8 +290,8 @@ function pageTxns() {
       <input class="input grow" id="fq" placeholder="搜索描述、商户、金额…" value="${esc(f.q)}">
       <div class="seg" id="fscope"><button data-v="month" class="${f.scope === 'month' ? 'on' : ''}">仅本月</button><button data-v="all" class="${f.scope === 'all' ? 'on' : ''}">全部</button></div>
       <select class="select" id="fkind"><option value="">全部类型</option>${kindOptions(f.kind)}</select>
-      <select class="select" id="fcat"><option value="">全部分类</option>${cats.map(c => `<option${c === f.cat ? ' selected' : ''}>${c}</option>`).join('')}</select>
-      <select class="select" id="facc"><option value="">全部账户</option>${accs.map(c => `<option${c === f.acc ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select>
+      <select class="select" id="fcat"><option value="">全部分类</option>${cats.map(c => `<option value="${c}"${c === f.cat ? ' selected' : ''}>${c}</option>`).join('')}</select>
+      <select class="select" id="facc"><option value="">全部账户</option>${accs.map(c => `<option value="${esc(c)}"${c === f.acc ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select>
       <button class="btn sp" id="addTxn">${icon('plus')}手动记一笔</button>
     </div><div id="txnTable"></div></div>`;
   return { html, draw() {
@@ -304,9 +313,9 @@ function renderTxnTable() {
   $('#txnTable').innerHTML = `<table class="tbl"><thead><tr><th>日期</th><th>描述</th><th>类型</th><th>分类</th><th>账户</th><th class="r">金额</th><th></th></tr></thead><tbody>
     ${view.map(t => `<tr data-id="${t.id}"><td class="num muted">${t.date}</td><td class="desc" title="${esc(t.desc)}">${esc(t.desc)}</td>
       <td><select class="cell-select" data-f="kind">${kindOptions(t.kind)}</select></td>
-      <td><select class="cell-select" data-f="category"${t.kind === 'transfer' ? ' disabled' : ''}>${catOptions(t.kind, t.category)}</select></td>
+      <td><select class="cell-select" data-f="category">${catOptions(t.kind, t.category)}</select></td>
       <td class="muted">${esc(t.account)}${t.card ? ' · ' + esc(t.card) : ''}</td>
-      <td class="r num ${t.kind === 'income' ? 'amt-in' : t.kind === 'transfer' ? 'amt-tr' : ''}"><b>${t.kind === 'income' ? '+' : t.kind === 'expense' ? '−' : ''}${sym()}${num(t.amount)}</b></td>
+      <td class="r num ${t.kind === 'income' ? 'amt-in' : t.kind === 'transfer' ? 'amt-tr' : ''}"><b>${SIGN[t.kind]}${sym()}${num(t.amount)}</b></td>
       <td class="r" style="white-space:nowrap"><button class="icon-btn" data-act="edit" title="编辑">${icon('edit')}</button><button class="icon-btn" data-act="del" title="删除">${icon('trash')}</button></td></tr>`).join('')
       || '<tr><td colspan="7" class="note">没有符合条件的交易</td></tr>'}</tbody></table>
     <div class="pager"><span>共 ${rows.length} 笔　收入 <b class="amt-in num">${money(inc)}</b>　支出 <b class="num" style="color:var(--ink)">${money(exp)}</b></span>
@@ -394,7 +403,7 @@ async function pageSync() {
       <div class="card-h" style="margin-top:22px"><h3>三种用法</h3></div>
       <ol class="steps">
         <li><b>扫码即用（任何手机）</b>相机扫左侧二维码，在浏览器里直接打开手机版，可“添加到主屏幕”。</li>
-        <li><b>安卓 App</b>从 <a id="repoLink">${esc(st.repo)}/releases</a> 下载 APK 安装；扫码后点“在 App 中打开”，或在 App 里手动填上面的地址和配对码。App 会保存上次同步的数据，离开电脑也能看。</li>
+        <li><b>安卓 App</b><a id="repoLink">${esc(st.repo)}/releases</a> 下载 APK 安装；扫码后点“在 App 中打开”，或在 App 里手动填上面的地址和配对码。App 会保存上次同步的数据，离开电脑也能看。</li>
         <li><b>手机记账</b>在手机上记的每一笔，下次连上同一 Wi-Fi 时自动传回电脑并计入分析。</li>
       </ol>
       <p class="sync-tip" style="text-align:left;margin-top:12px">首次开启时 Windows 防火墙可能弹窗询问，请勾选“专用网络”并允许。配对码相当于密码，不要发给别人；怀疑泄露就点“更换”。</p>
@@ -558,10 +567,15 @@ function setTheme(t) {
 
 async function init() {
   S.boot = await api.bootstrap(); setTheme(S.boot.theme);
+  I18N.set(S.boot.lang || 'zh');
+  $('#langSel').innerHTML = I18N.LANGS.map(([c, n]) => `<option value="${c}"${c === I18N.lang ? ' selected' : ''}>${n}</option>`).join('');
+  $('#langSel').onchange = async e => { await api.set_lang(e.target.value); location.reload(); };  // 重新载入，保证所有文字都按新语言生成
+  I18N.walk(document.body);
   if (DEV) { // 调试参数：?dev=1&page=advice&theme=dark&noanim=1
     const q = new URLSearchParams(location.search);
     if (q.get('page')) S.page = q.get('page');
     if (q.get('theme')) setTheme(q.get('theme'));
+    if (q.get('lang')) { I18N.set(q.get('lang')); await api.set_lang(q.get('lang')); I18N.walk(document.body); }
     if (q.has('noanim')) document.head.insertAdjacentHTML('beforeend', '<style>*{animation:none!important;transition:none!important}</style>');
   }
   S.currency = S.boot.currencies[0]?.code || null; pickMonth();

@@ -40,6 +40,10 @@ def _dialog(kind):
     return getattr(webview, f"{kind}_DIALOG")
 
 
+def _norm_desc(s):
+    return "".join(ch for ch in (s or "").lower() if ch.isalnum())
+
+
 def _enrich(txns, account, currency, learned, credit_card=False):
     names = transfers.owner_names() + transfers.learn_owner(t.get("desc", "") for t in txns)
     for t in txns:
@@ -52,8 +56,14 @@ def _enrich(txns, account, currency, learned, credit_card=False):
             t["category"] = "退款报销"  # 信用卡上的入账只可能是退款 / 返现
     store.assign_hashes(txns)
     have = store.existing_hashes({t["hash"] for t in txns})
+    near = {}
+    for e in store.all_transactions(currency):
+        if e["account"] == account:
+            near.setdefault((e["date"], round(e["amount"] * 100)), []).append(_norm_desc(e["desc"]))
     for t in txns:
-        t["dup"] = t["hash"] in have
+        d = _norm_desc(t.get("desc", ""))
+        t["dup"] = t["hash"] in have or any(
+            x[:10] == d[:10] for x in near.get((t["date"], round(t["amount"] * 100)), []))
     return txns
 
 
@@ -75,16 +85,20 @@ class Api:
             "transfer_category": TRANSFER_CATEGORY,
             "accounts": sorted({t["account"] for t in txns if t["account"]}),
             "theme": store.get_setting("theme", "light"),
+            "lang": store.get_setting("lang", "zh"),
             "today": dt.date.today().isoformat(),
         }
 
     def set_theme(self, theme):
         store.set_setting("theme", theme)
 
+    def set_lang(self, lang):
+        store.set_setting("lang", lang if lang in analysis.i18n.LANGS else "zh")
+
     # ---------- 导入 ----------
     def pick_files(self):
         types = ("账单与凭证 (*.pdf;*.png;*.jpg;*.jpeg;*.bmp;*.webp;*.gif;*.tif;*.tiff;*.csv;*.tsv;*.txt;"
-                 "*.xlsx;*.xlsm;*.xls;*.docx;*.html;*.htm;*.ofx;*.qfx)", "所有文件 (*.*)")
+                 "*.xlsx;*.xlsm;*.xls;*.docx;*.html;*.htm;*.ofx;*.qfx;*.qbo)", "所有文件 (*.*)")
         res = window.create_file_dialog(_dialog("OPEN"), allow_multiple=True, file_types=types)
         return list(res) if res else []
 
@@ -111,7 +125,7 @@ class Api:
                 amt = round(abs(float(t["amount"])), 2)
             except (ValueError, TypeError, KeyError):
                 continue
-            if amt <= 0 or t.get("kind") not in ("income", "expense", "transfer"):
+            if amt <= 0 or t.get("kind") not in ("income", "expense", "transfer", "refund"):
                 continue
             txns.append({"date": d, "amount": amt, "kind": t["kind"],
                          "category": t.get("category") or categorize(t.get("desc", ""), t["kind"]),
@@ -128,7 +142,7 @@ class Api:
 
     # ---------- 查询 ----------
     def get_analysis(self, month, currency):
-        return analysis.analyze(store.all_transactions(currency), month, currency)
+        return analysis.analyze(store.all_transactions(currency), month, currency, store.get_setting("lang", "zh"))
 
     def get_transactions(self, currency):
         return store.all_transactions(currency)
@@ -145,8 +159,10 @@ class Api:
             fields["locked"] = 1
         if "kind" in fields and fields["kind"] != old["kind"] and "category" not in fields:
             fields["category"] = categorize(old["desc"], kind, store.learned_rules())
-        if kind == "transfer":
+        if kind == "transfer" and fields.get("category", old["category"]) != transfers.RETURNED:
             fields["category"] = TRANSFER_CATEGORY
+        if kind == "refund" and "category" not in fields:
+            fields["category"] = categorize(old["desc"], "expense", store.learned_rules())
         store.update_transaction(tid, fields)
         if "category" in fields and kind != "transfer":  # 记住这次修改，以后同类交易自动归类
             store.save_rule(rule_key(fields.get("desc", old["desc"])), fields["category"], kind)
@@ -225,7 +241,7 @@ class Api:
                 ws.column_dimensions[chr(65 + i)].width = w
             ws.freeze_panes = "A2"
 
-        kinds = {"income": "收入", "expense": "支出", "transfer": "内部转账"}
+        kinds = {"income": "收入", "expense": "支出", "transfer": "不计收支", "refund": "退款冲减"}
         ws = wb.active
         ws.title = "交易明细"
         sheet(ws, ["日期", "类型", "分类", "金额", "描述", "账户", "卡片"],
@@ -253,7 +269,7 @@ class Api:
         for c in ws3["E"][1:]:
             c.number_format = "0.0%"
         if months:
-            a = analysis.analyze(txns, months[-1], currency)
+            a = analysis.analyze(txns, months[-1], currency, store.get_setting("lang", "zh"))
             ws4 = wb.create_sheet(f"建议({months[-1]})")
             sheet(ws4, ["级别", "结论", "依据", "建议做法"],
                   [[{"alert": "需立即关注", "warn": "建议调整", "info": "提示", "good": "保持"}[x["level"]],

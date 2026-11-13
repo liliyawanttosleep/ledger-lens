@@ -21,7 +21,7 @@ from categorize import is_transfer, looks_like_income
 
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif", ".tif", ".tiff", ".jfif"}
 SUPPORTED_EXT = IMAGE_EXT | {".pdf", ".csv", ".tsv", ".txt", ".xlsx", ".xlsm", ".xls", ".docx",
-                             ".html", ".htm", ".ofx", ".qfx"}
+                             ".html", ".htm", ".ofx", ".qfx", ".qbo"}
 
 MONTHS = {m: i + 1 for i, m in enumerate(
     ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"])}
@@ -315,7 +315,7 @@ _CARD_PATTERNS = [
 def guess_card(text: str, filename: str, credit_card: bool) -> str:
     """从文件名或账单抬头里找卡号后四位，例如“尾号1234”。找不到返回空串。"""
     # 文件名里常带卡号后四位：statements-4064-.pdf、October2026_9838.csv（排除年份）
-    m = re.search(r"[_\-](?!(?:19|20)\d\d(?!\d))(\d{4})(?=[_\-.]|$)", filename)
+    m = re.search(r"[_\-]\s*(?!(?:19|20)\d\d(?!\d))(\d{4})(?=[_\-.]|$)", filename)
     if m:
         return ("信用卡" if credit_card else "") + "尾号" + m[1]
     for src in (filename, text[:2500]):
@@ -441,7 +441,7 @@ def parse_grid(rows, ctx, forced_mapping=None):
         parts = []
         for c in text_cols:
             v = str(_cell(row, c) or "").replace("\n", " ").strip()
-            if v and v not in ("/", "-", "None") and v not in parts:
+            if v and v not in ("/", "-", "None") and v not in parts and not re.match(r"download from\b", v, re.I):
                 parts.append(v)
         desc = " · ".join(parts)
         if cur_col is not None and currency is None:
@@ -982,7 +982,7 @@ def parse_file(path: str, mode: str = "auto", password: str | None = None) -> di
         grids, t = _read_html(_decode(open(path, "rb").read()))
         lines = t.splitlines()
         method = "网页表格"
-    elif ext in (".ofx", ".qfx"):
+    elif ext in (".ofx", ".qfx", ".qbo"):
         raw = _decode(open(path, "rb").read())
         ctx.set_text(raw)
         txns, currency = _parse_ofx(raw, ctx)
