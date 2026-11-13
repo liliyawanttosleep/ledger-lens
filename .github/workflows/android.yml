@@ -1,0 +1,65 @@
+name: Android APK
+
+# 安卓相关文件有改动、打 v* 标签或手动运行时，构建安装包并附到最新的 Release。
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/android.yml"
+      - "android/**"
+      - "app/web/mobile/**"
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      # 复用同一把调试签名，这样新版本可以直接覆盖安装
+      - name: Restore signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: debug-keystore-v1
+
+      - name: Build APK
+        working-directory: android
+        run: gradle assembleDebug --no-daemon
+
+      - name: Rename
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk LedgerLens-android.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LedgerLens-android
+          path: LedgerLens-android.apk
+
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG="$GITHUB_REF_NAME"
+            gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --notes ""
+          else
+            TAG="$(gh release list --limit 1 --json tagName --jq '.[0].tagName')"
+          fi
+          if [[ -n "$TAG" && "$TAG" != "null" ]]; then
+            gh release upload "$TAG" LedgerLens-android.apk --clobber
+          else
+            echo "No release yet; APK is available as a workflow artifact."
+          fi
