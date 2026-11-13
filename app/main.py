@@ -132,20 +132,22 @@ class Api:
                          "desc": (t.get("desc") or "").strip()[:120],
                          "account": (batch.get("account") or "").strip()[:30],
                          "card": str(t.get("card") or batch.get("card") or "").strip()[:24],
+                         "flow": t.get("flow") if t.get("flow") in ("in", "out") and t["kind"] == "transfer" else "",
                          "currency": batch.get("currency") or "CNY"})
         if not txns:
             return {"count": 0}
         store.assign_hashes(txns)
         store.add_import(batch.get("file", "手动添加"), batch.get("account", ""), batch.get("method", ""), txns)
-        return {"count": len(txns), "transfers": transfers.reclassify(), "months": sorted({t["date"][:7] for t in txns}),
-                "currency": txns[0]["currency"]}
+        n = transfers.reclassify()
+        return {"count": len(txns), "transfers": n, "paired": transfers.LAST["pairs"], "pending": transfers.LAST["pending"],
+                "months": sorted({t["date"][:7] for t in txns}), "currency": txns[0]["currency"]}
 
     # ---------- 查询 ----------
     def get_analysis(self, month, currency):
         return analysis.analyze(store.all_transactions(currency), month, currency, store.get_setting("lang", "zh"))
 
     def get_transactions(self, currency):
-        return store.all_transactions(currency)
+        return transfers.with_pairs(store.all_transactions(currency))
 
     def update_transaction(self, tid, fields):
         old = store.get_transaction(tid)

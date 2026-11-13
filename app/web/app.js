@@ -55,6 +55,7 @@ window.addEventListener('resize', () => Object.values(S.charts).forEach(c => c.r
 
 /* ───────── 明细钻取：点分类 / 商户 / 账户，看每一笔来自哪家银行哪张卡 ───────── */
 const srcName = t => (t.account || '未命名账户') + (t.card ? ' · ' + t.card : '');
+const pairTag = t => t.pair ? `<div class="pair">↔ <span data-raw>${esc((t.pair.account || '未命名账户') + (t.pair.card ? ' · ' + t.pair.card : ''))}</span> · ${t.pair.date.slice(5)}</div>` : '';
 const DR = { f: null, sort: 'date' };
 async function drill(f) {
   if (f) { DR.f = f; DR.sort = 'date'; }
@@ -73,7 +74,7 @@ async function drill(f) {
       <div class="src-grid">${srcs.map(([k, v]) => `<div class="src"><span>${esc(k)}</span><b class="num">${money(v.amt)}</b><div class="track"><i style="width:${total ? v.amt / total * 100 : 0}%"></i></div><em class="num">${v.n} 笔 · ${total ? (v.amt / total * 100).toFixed(0) : 0}%</em></div>`).join('')}</div>
       <div class="toolbar" style="margin:14px 0 6px"><b style="font-size:14px">每一笔</b><div class="seg sp" id="drSort"><button data-v="date" class="${DR.sort === 'date' ? 'on' : ''}">按日期</button><button data-v="amount" class="${DR.sort === 'amount' ? 'on' : ''}">按金额</button></div></div>
       <table class="tbl"><thead><tr><th>日期</th><th>商家 / 描述</th><th>分类</th><th>银行 / 账户</th><th>卡片 / 支付方式</th><th class="r">金额</th></tr></thead><tbody>
-      ${rows.map(t => `<tr><td class="num muted">${t.date}</td><td class="desc" style="max-width:300px" title="${esc(t.desc)}">${esc(t.desc)}</td><td><span class="tag">${esc(t.category)}</span></td><td>${esc(t.account || '—')}</td><td class="${t.card ? '' : 'muted'}">${esc(t.card || '未识别')}</td><td class="r num ${t.kind === 'income' ? 'amt-in' : ''}"><b>${SIGN[t.kind]}${sym()}${num(t.amount)}</b></td></tr>`).join('') || '<tr><td colspan="6" class="note">没有记录</td></tr>'}</tbody></table>
+      ${rows.map(t => `<tr><td class="num muted">${t.date}</td><td style="max-width:300px"><div class="desc" title="${esc(t.desc)}">${esc(t.desc)}</div>${pairTag(t)}</td><td><span class="tag">${esc(t.category)}</span></td><td>${esc(t.account || '—')}</td><td class="${t.card ? '' : 'muted'}">${esc(t.card || '未识别')}</td><td class="r num ${t.kind === 'income' ? 'amt-in' : ''}"><b>${SIGN[t.kind]}${sym()}${num(t.amount)}</b></td></tr>`).join('') || '<tr><td colspan="6" class="note">没有记录</td></tr>'}</tbody></table>
     </div>
     <div class="m-foot"><span>卡片信息来自账单里的卡号 / 支付方式；没识别到的可在“交易明细”里补上</span><div><button class="btn" id="drOpen">在交易明细中打开</button><button class="btn primary" data-close>关闭</button></div></div>`);
   $$('#drSort button').forEach(b => b.onclick = () => { DR.sort = b.dataset.v; drill(); });
@@ -311,7 +312,7 @@ function renderTxnTable() {
   const view = rows.slice(f.page * per, f.page * per + per);
   const inc = rows.filter(t => t.kind === 'income').reduce((s, t) => s + t.amount, 0), exp = rows.filter(t => t.kind === 'expense').reduce((s, t) => s + t.amount, 0);
   $('#txnTable').innerHTML = `<table class="tbl"><thead><tr><th>日期</th><th>描述</th><th>类型</th><th>分类</th><th>账户</th><th class="r">金额</th><th></th></tr></thead><tbody>
-    ${view.map(t => `<tr data-id="${t.id}"><td class="num muted">${t.date}</td><td class="desc" title="${esc(t.desc)}">${esc(t.desc)}</td>
+    ${view.map(t => `<tr data-id="${t.id}"><td class="num muted">${t.date}</td><td><div class="desc" title="${esc(t.desc)}">${esc(t.desc)}</div>${pairTag(t)}</td>
       <td><select class="cell-select" data-f="kind">${kindOptions(t.kind)}</select></td>
       <td><select class="cell-select" data-f="category">${catOptions(t.kind, t.category)}</select></td>
       <td class="muted">${esc(t.account)}${t.card ? ' · ' + esc(t.card) : ''}</td>
@@ -369,7 +370,7 @@ async function pageImports() {
   <div class="card"><div class="card-h"><h3>数据管理</h3><span>所有数据只保存在这台电脑上，不会上传</span></div>
     <div class="toolbar" style="margin:0"><button class="btn" id="exportBtn">${icon('download')}导出 Excel 报告</button><button class="btn" id="demoBtn">载入示例数据</button><button class="btn danger" id="clearBtn">${icon('trash')}清空全部数据</button></div></div>
   <div class="card" style="margin-top:18px"><div class="card-h"><h3>内部转账识别</h3><span>信用卡还款、自己账户之间互转不算收入也不算开销</span></div>
-    <p style="color:var(--ink-2);font-size:13.5px;margin-bottom:12px;user-select:text">程序会自动识别三类记录并标为“内部转账”：① 账单里的还款 / 转账字样（如 Payment Thank You、Payment from CHK、Ext Trnsfr、信用卡还款）；② 对方是你本人的转账（如 Zelle payment to 你的名字）；③ 两个账户之间金额相同、日期相近的一出一进。你手动改过类型的交易不会被再次改动。</p>
+    <p style="color:var(--ink-2);font-size:13.5px;margin-bottom:12px;user-select:text">程序会自动识别三类记录并标为“内部转账”：① 账单里的还款 / 转账字样（如 Payment Thank You、Payment from CHK、Ext Trnsfr、信用卡还款）；② 对方是你本人的转账（如 Zelle payment to 你的名字）；③ 两个账户之间金额相同、日期相近的一出一进。你手动改过类型的交易不会被再次改动。</p><p style="color:var(--ink-2);font-size:13.5px;margin-bottom:12px;user-select:text">每次导入新账单，程序都会拿它和之前导入的所有账单核对，对上的两笔会互相标注“↔ 对方账户”；同一条转账路线对上过两次后，以后即使另一头的账单还没导入也会直接识别。</p>
     <div class="toolbar" style="margin:0"><input class="input grow" id="ownerNames" value="${esc(owner)}" placeholder="你在银行账单上的姓名，多个用逗号分隔，例如：Zhang San, 张三"><button class="btn" id="ownerSave">保存并重新识别</button></div></div>`;
   return { html, draw() {
     $$('#content tr[data-id] .icon-btn').forEach(b => b.onclick = async () => {
@@ -484,14 +485,14 @@ function bindImport() {
   });
   const ok = $('#impOk');
   if (ok) ok.onclick = async () => {
-    ok.disabled = true; let count = 0, last = null, cur = null, tr = 0;
+    ok.disabled = true; let count = 0, last = null, cur = null, tr = 0, pr = 0;
     for (const it of IMP.items) {
       const txns = (it.txns || []).filter(t => t.on && t.date && t.amount > 0);
       if (!txns.length) continue;
       const r = await api.commit_import({ file: it.file, account: it.account, card: it.card, currency: it.currency, method: it.method, txns });
-      count += r.count; tr += r.transfers || 0; if (r.months && (!last || r.months.at(-1) > last)) { last = r.months.at(-1); cur = r.currency; }
+      count += r.count; tr += r.transfers || 0; pr += r.paired || 0; if (r.months && (!last || r.months.at(-1) > last)) { last = r.months.at(-1); cur = r.currency; }
     }
-    closeModal(); toast(`已导入 ${count} 笔交易` + (tr ? `，另识别出 ${tr} 笔内部转账（不计入收支）` : ''));
+    closeModal(); toast(`已导入 ${count} 笔交易` + (tr ? `，另识别出 ${tr} 笔内部转账（不计入收支）` : '') + (pr ? `，与已有账单对上 ${pr} 对转账` : ''));
     if (cur) S.currency = cur; S.page = 'overview'; await reload(last);
   };
 }

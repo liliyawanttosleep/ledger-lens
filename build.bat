@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 chcp 65001 >nul
 rem 打包成单个 exe（输出在 dist 文件夹）。首次使用先运行：python -m venv .venv ^&^& .venv\Scripts\pip install -r requirements.txt
 cd /d "%~dp0"

@@ -35,6 +35,8 @@ assets/            图标与生成脚本
   （`SUBS` 带数字的句式 + `DICT` 短语）。新增界面文字后要在 `DICT` 里补四列（en, fr, es, ko），否则非中文界面会漏出中文。
   用户数据（商户名、描述）放在 `.desc` 或 `data-raw` 元素里，不会被翻译。`<option>` 必须写明 `value`，否则翻译后取值会变。
 - **建议文案**在 `app/i18n.py` 的 `ADV` 里按 key 分语言写，`analysis._advice` 只传 key 和参数。
+- **`flow`（`in` / `out`）是资金方向**，kind 变成 `transfer` 后仍保留；**`pair_id`** 指向另一账户里配对上的那笔。
+  `transfers.reclassify()` 每次导入后对全库重跑（新账单与历史账单核对），不要改成只处理新导入的记录。
 - **用户手动改过类型的交易会被锁定**（`locked=1`），`transfers.reclassify()` 不再改它。
 - **隐私**：`samples/` 只能放虚构数据；真实账单、数据库、用户姓名不得进仓库。提交用 GitHub noreply 邮箱。
 - 表结构变化要在 `store.init()` 里做 `ALTER TABLE` 迁移，不能假设是新库。

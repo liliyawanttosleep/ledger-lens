@@ -40,6 +40,12 @@ def init():
             c.execute("ALTER TABLE transactions ADD COLUMN card TEXT DEFAULT ''")
         if "locked" not in cols:  # 用户手动改过类型的交易，自动识别不再改动
             c.execute("ALTER TABLE transactions ADD COLUMN locked INTEGER DEFAULT 0")
+        if "flow" not in cols:  # in / out, kept after kind becomes transfer
+            c.execute("ALTER TABLE transactions ADD COLUMN flow TEXT DEFAULT ''")
+            c.execute("UPDATE transactions SET flow='in' WHERE kind IN ('income','refund')")
+            c.execute("UPDATE transactions SET flow='out' WHERE kind='expense'")
+        if "pair_id" not in cols:  # id of the matching record in another account
+            c.execute("ALTER TABLE transactions ADD COLUMN pair_id INTEGER DEFAULT 0")
 
 
 def txn_hash(t: dict, seq: int = 0) -> str:
@@ -78,10 +84,11 @@ def add_import(filename, account, method, txns) -> int:
                         (filename, account, method, dt.datetime.now().strftime("%Y-%m-%d %H:%M"), len(txns)))
         iid = cur.lastrowid
         c.executemany(
-            "INSERT INTO transactions(date, amount, kind, category, desc, account, currency, import_id, hash, card)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO transactions(date, amount, kind, category, desc, account, currency, import_id, hash, card, flow)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             [(t["date"], t["amount"], t["kind"], t["category"], t.get("desc", ""), t.get("account", ""),
-              t.get("currency", "CNY"), iid, t.get("hash", ""), t.get("card", "") or "") for t in txns])
+              t.get("currency", "CNY"), iid, t.get("hash", ""), t.get("card", "") or "",
+              t.get("flow") or {"income": "in", "refund": "in", "expense": "out"}.get(t["kind"], "")) for t in txns])
         return iid
 
 
@@ -95,7 +102,7 @@ def all_transactions(currency=None):
 
 
 def update_transaction(tid, fields: dict):
-    allowed = {k: v for k, v in fields.items() if k in ("date", "amount", "kind", "category", "desc", "account", "card", "locked")}
+    allowed = {k: v for k, v in fields.items() if k in ("date", "amount", "kind", "category", "desc", "account", "card", "locked", "flow", "pair_id")}
     if not allowed:
         return
     sets = ", ".join(f"{k}=?" for k in allowed)

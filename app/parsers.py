@@ -332,9 +332,11 @@ def _clean_desc(s: str) -> str:
     return s[:90]
 
 
-def _mk(date, amount, kind, desc):
+def _mk(date, amount, kind, desc, sign=0):
+    # flow: the money direction (in / out). Kept even when kind becomes "transfer", so pairing can check it later.
+    flow = "in" if (sign > 0 or kind == "income") else "out" if (sign < 0 or kind == "expense") else ""
     return {"date": date.isoformat(), "amount": round(abs(amount), 2), "kind": kind,
-            "desc": _clean_desc(desc) or "(无描述)", "card": ""}
+            "desc": _clean_desc(desc) or "(无描述)", "card": "", "flow": flow}
 
 
 def _finalize_kind(sign: int, desc: str) -> str:
@@ -493,7 +495,7 @@ def parse_grid(rows, ctx, forced_mapping=None):
     txns = []
     for date, amount, sign, desc, neutral, _, _, card in staged:
         kind = "transfer" if neutral else _finalize_kind(sign, desc)
-        t = _mk(date, amount, kind, desc)
+        t = _mk(date, amount, kind, desc, sign)
         t["card"] = card
         txns.append(t)
     return txns, mapping, currency
@@ -603,7 +605,7 @@ def parse_text_lines(lines, ctx, credit_card=False):
             sign = r["section"]
         else:
             sign = 1 if looks_like_income(r["desc"]) else -1
-        txns.append(_mk(r["date"], r["amt"], _finalize_kind(sign, r["desc"]), r["desc"]))
+        txns.append(_mk(r["date"], r["amt"], _finalize_kind(sign, r["desc"]), r["desc"], sign))
     return txns
 
 
@@ -725,7 +727,7 @@ def parse_ocr_lines(lines, ctx):
         val, sign, *_ = r["amts"][0]
         if sign == 0:
             sign = 1 if looks_like_income(desc) else -1
-        txns.append(_mk(date, val, _finalize_kind(sign, desc), desc))
+        txns.append(_mk(date, val, _finalize_kind(sign, desc), desc, sign))
     return txns
 
 
@@ -893,7 +895,7 @@ def _parse_ofx(text, ctx):
         except ValueError:
             continue
         desc = " ".join(x for x in (tag("NAME"), tag("MEMO")) if x)
-        txns.append(_mk(date, amt, _finalize_kind(1 if amt > 0 else -1, desc), desc))
+        txns.append(_mk(date, amt, _finalize_kind(1 if amt > 0 else -1, desc), desc, 1 if amt > 0 else -1))
     cur = re.search(r"<CURDEF>([A-Z]{3})", text)
     return txns, (cur[1] if cur else None)
 

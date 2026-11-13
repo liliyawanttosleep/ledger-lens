@@ -361,3 +361,7 @@ input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--accent); c
 .excl a:hover { color: var(--accent); border-color: var(--accent); }
 .excl a b { color: var(--ink); font-weight: 600; margin-right: 4px; }
 .excl em { font-style: normal; color: var(--ink-3); font-size: 12.5px; margin-left: auto; }
+
+/* 内部转账的另一头 */
+.pair{font-size:12px;color:var(--ink-3,var(--ink-2));margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+td > .desc{max-width:inherit}

@@ -5,7 +5,9 @@
 三层判断：
   1. 关键词：Payment Thank You、Payment from CHK、Ext Trnsfr、信用卡还款 ……（categorize.is_transfer）
   2. 本人姓名：对方是自己（Zelle payment to <本人>、Transfer <本人>）
-  3. 跨账户配对：A 账户转出与 B 账户转入金额相同、日期相近，且至少一方带有转账字样
+  3. 跨账户配对：A 账户转出与 B 账户转入金额相同、方向相反、日期相近，且至少一方带有转账字样。
+     每次导入都对全库重新核对，配上的两笔互相记在 pair_id（“有记忆”：先后导入的账单也能对上）
+  4. 路线记忆：同一描述签名已配上过两次或被手动确认过，以后直接认
 用户手动改过类型的交易会被锁定，不再自动改动。
 """
 import datetime as dt
@@ -31,7 +33,7 @@ _HINT = re.compile(r"transfer|trnsfr|xfer|zelle|payment|pmt\b|\bach\b|wire|p2p|d
 _SELF_CTX = re.compile(r"zelle|transfer|trnsfr|xfer|p2p|\bach\b|wire|转账|汇款|转入|转出", re.I)
 _NOT_SELF = re.compile(r"salary|payroll|refund|rent\b|工资|薪|退款|报销", re.I)
 _ZELLE_PARTY = re.compile(r"zelle (?:payment|transfer)?\s*(?:to|from)\s+([a-z][a-z .'\-]{2,40}?)(?:\s+(?:for|conf)\b|\s*$)", re.I)
-_BANK_WORD = r"chase|boa|bofa|bank|usbank|wells|citi|capital|discover|amex|checking|savings|fidelity|schwab"
+_BANK_WORD = r"chase|\bboa\b|bofa|bank|usbank|wells|citi|capital|discover|amex|checking|savings|fidelity|schwab"
 _BANK_CTX = re.compile(r"electronic (?:deposit|withdrawal)|web authorized (?:pmt|payment)|external transfer|"
                        r"ach (?:deposit|credit|debit|withdrawal|pmt)|real time payment|网银互联|跨行", re.I)
 _BANK_NAME = re.compile(r"jpmorgan chase|chase bank|bank of america|wells fargo|citibank|capital one|u\.?s\.? bank|"
@@ -113,59 +115,171 @@ def _days(a, b):
     return abs((dt.date.fromisoformat(a) - dt.date.fromisoformat(b)).days)
 
 
+LAST = {"pairs": 0, "pending": 0, "remembered": 0}   # 最近一次 reclassify 的结果，给界面提示用
+WINDOW = 5                                            # 两头入账日期最多相差几天（跨周末的 ACH）
+_VAGUE = {"其他支出", "其他收入", "转账收入"}          # 只有这些“说不清”的分类才可能被配对改成内部转账
+_FLOW_IN = re.compile(r"\bfrom\b|deposit|thank you|received|转入|汇入|存入", re.I)
+_FLOW_OUT = re.compile(r"\bto\b|withdrawal|转出|汇出", re.I)
+
+
+def flow(t) -> str:
+    """资金方向 in / out。入库时记录；老数据里已是 transfer 的只能从描述里猜，猜不出返回空串（配对时不设限）。"""
+    if t.get("flow") in ("in", "out"):
+        return t["flow"]
+    if t["kind"] in ("income", "refund"):
+        return "in"
+    if t["kind"] == "expense":
+        return "out"
+    d = t.get("desc") or ""
+    i, o = bool(_FLOW_IN.search(d)), bool(_FLOW_OUT.search(d))
+    return "in" if i and not o else "out" if o and not i else ""
+
+
+_BANKS = [("chase", r"jpmorgan|chase"), ("boa", r"bank of america|\bboa\b|bofa"), ("usbank", r"\bu\.?s\.? ?bank"),
+          ("wells", r"wells"), ("citi", r"citi"), ("capone", r"capital one"), ("discover", r"discover"),
+          ("amex", r"amex|american express"), ("fidelity", r"fid bkg|fidelity"), ("schwab", r"schwab"),
+          ("icbc", r"icbc|工商"), ("boc", r"bank of china|中国银行"), ("ccb", r"建设银行|\bccb\b"),
+          ("cmb", r"招商|\bcmb\b"), ("abc", r"农业银行"), ("alipay", r"支付宝|alipay"), ("wechat", r"微信|wechat")]
+_BANKS = [(k, re.compile(rx, re.I)) for k, rx in _BANKS]
+
+
+def banks_in(text: str) -> set:
+    return {k for k, rx in _BANKS if rx.search(text or "")}
+
+
+def names_elsewhere(t, other) -> bool:
+    """t 的描述里点名了某家银行，而 other 不在那家银行 → 这两笔不是同一次转账的两头。"""
+    named = banks_in(t["desc"]) - banks_in(t.get("account"))
+    there = banks_in(other.get("account"))
+    return bool(named and there and not (named & there))
+
+
+def sig(desc: str) -> str:
+    """转账描述的“签名”：去掉通道前缀和数字后的前四个词。同一条转账路线每个月的描述签名相同。"""
+    s = _PAYER_PREFIX.sub("", (desc or "").split(" · ")[0].lower())
+    words = re.findall(r"[a-z一-鿿]{2,}", s)
+    return " ".join(words[:4]) if len(words) >= 2 else ""
+
+
+def with_pairs(txns: list) -> list:
+    """给每笔已配对的内部转账附上另一头的信息（pair: {account, card, date}），界面用来显示“↔ 对方账户”。"""
+    byid = {t["id"]: t for t in txns}
+    for t in txns:
+        p = byid.get(t.get("pair_id") or 0)
+        if p and t["kind"] == "transfer":
+            t["pair"] = {"account": p.get("account") or "", "card": p.get("card") or "", "date": p["date"]}
+    return txns
+
+
 def reclassify() -> int:
-    """对全库重新识别内部转账，返回本次新标记的笔数。"""
-    txns = [t for t in store.all_transactions() if not t.get("locked")]
-    learn_owner(t["desc"] for t in txns)
+    """对全库重新识别内部转账，返回本次新标记的笔数。
+    每次导入后都会跑：新账单里的每一笔都会去和库里已有的所有账单核对（金额、日期、方向、转账字样），
+    所以先导入信用卡、过几天再导入储蓄卡，两头也能对上。配上的两笔互相记在 pair_id 里。"""
+    pool = store.all_transactions()
+    byid = {t["id"]: t for t in pool}
+    # 0 清掉失效的配对（另一头被删除，或有一头被用户改回了收入 / 支出）
+    for t in pool:
+        if not t.get("pair_id"):
+            continue
+        p = byid.get(t["pair_id"])
+        if not p or p.get("pair_id") != t["id"] or p["kind"] != "transfer" or t["kind"] != "transfer":
+            store.update_transaction(t["id"], {"pair_id": 0})
+            t["pair_id"] = 0
+    learn_owner(t["desc"] for t in pool if not t.get("locked"))
     names = owner_names()
     mark = set()
 
-    # 1 + 2：关键词与本人姓名
-    for t in txns:
-        if t["kind"] in ("income", "expense") and (is_transfer(t["desc"]) or is_self(t["desc"], names)
-                                                  or is_bank_move(t["desc"])):
-            mark.add(t["id"])
+    def free(t):   # 可以被自动改类型
+        return not t.get("locked") and t["kind"] in ("income", "expense") and t["id"] not in mark
 
     def is_tr(t):
-        return t["kind"] == "transfer" or t["id"] in mark
+        return (t["kind"] == "transfer" and t["category"] == TRANSFER_CATEGORY) or t["id"] in mark
 
-    # 3：跨账户配对（按币种、金额）
+    # 1 + 2：关键词、本人姓名、对手方是银行 / 券商
+    for t in pool:
+        if free(t) and (is_transfer(t["desc"]) or is_self(t["desc"], names) or is_bank_move(t["desc"])):
+            mark.add(t["id"])
+
+    # 3：跨账户配对（按币种、金额分组）
     by_amt = defaultdict(list)
-    for t in txns:
+    for t in pool:
         by_amt[(t["currency"], round(t["amount"] * 100))].append(t)
-    for group in by_amt.values():
-        if len(group) < 2:
-            continue
-        used = set()
-        # 3a 已确定是转账的一方（如信用卡的 Payment Thank You）去找另一账户里金额相同的对手记录
-        for a in group:
-            if not is_tr(a):
-                continue
-            for b in group:
-                if b["id"] in used or b["id"] == a["id"] or is_tr(b) or _key(a) == _key(b):
+    groups = [sorted(g, key=lambda t: t["date"]) for g in by_amt.values() if len(g) >= 2]
+    linked = {t["id"] for t in pool if t.get("pair_id")}
+    new_pairs = [0]
+
+    def compatible(a, b):
+        fa, fb = flow(a), flow(b)
+        return (_key(a) != _key(b) and _days(a["date"], b["date"]) <= WINDOW and not (fa and fb and fa == fb)
+                and not names_elsewhere(a, b) and not names_elsewhere(b, a))
+
+    def candidate(b):   # 还没定性、但看起来像转账的一头
+        return free(b) and b["category"] in _VAGUE and not _zelle_other(b["desc"], names)
+
+    def link(a, b):
+        for x, y in ((a, b), (b, a)):
+            store.update_transaction(x["id"], {"pair_id": y["id"]})
+            x["pair_id"] = y["id"]
+            linked.add(x["id"])
+        new_pairs[0] += 1
+
+    def pair():
+        for g in groups:
+            # 3a 已确定是转账的一头（如信用卡的 Payment Thank You）去找另一账户里金额相同、方向相反的记录
+            for a in g:
+                if a["id"] in linked or not is_tr(a):
                     continue
-                if _days(a["date"], b["date"]) <= 4 and _HINT.search(b["desc"]) \
-                        and not _zelle_other(b["desc"], names):
-                    mark.add(b["id"])
-                    used.add(b["id"])
+                best = None
+                for b in sorted(g, key=lambda b: (not is_tr(b), _days(a["date"], b["date"]))):
+                    if b["id"] == a["id"] or b["id"] in linked or not compatible(a, b):
+                        continue
+                    if is_tr(b) or (candidate(b) and _HINT.search(b["desc"])):
+                        best = b
+                        break
+                if best:
+                    if not is_tr(best):
+                        mark.add(best["id"])
+                    link(a, best)
+            # 3b 两头都还没定性：一出一进、不同账户、日期相近、至少一头带转账字样
+            for o in g:
+                if o["id"] in linked or o["kind"] != "expense" or not candidate(o):
+                    continue
+                for i in sorted(g, key=lambda b: _days(o["date"], b["date"])):
+                    if i["id"] in linked or i["kind"] != "income" or not candidate(i) or not compatible(o, i):
+                        continue
+                    if not (_HINT.search(o["desc"]) or _HINT.search(i["desc"])):
+                        continue
+                    mark.update((o["id"], i["id"]))
+                    link(o, i)
                     break
-        # 3b 一出一进、不同账户、日期相近、带转账字样
-        outs = [t for t in group if t["kind"] == "expense" and not is_tr(t)]
-        ins = [t for t in group if t["kind"] == "income" and not is_tr(t)]
-        for o in outs:
-            for i in ins:
-                if i["id"] in used or _key(o) == _key(i) or _days(o["date"], i["date"]) > 4:
-                    continue
-                if not (_HINT.search(o["desc"]) or _HINT.search(i["desc"])):
-                    continue
-                if _zelle_other(o["desc"], names) or _zelle_other(i["desc"], names):
-                    continue
-                mark.update((o["id"], i["id"]))
-                used.add(i["id"])
-                break
+
+    pair()
+
+    # 4 记忆：某条转账路线（描述签名）已经配上过两次，或被用户手动确认过，
+    #   以后同样描述的记录即使另一头的账单还没导入，也直接算内部转账。用户手动改回收支的签名永不套用。
+    seen, veto = Counter(), set()
+    for t in pool:
+        s = sig(t["desc"])
+        if not s:
+            continue
+        if is_tr(t) and (t["id"] in linked or t.get("locked")):
+            seen[s] += 2 if t.get("locked") else 1
+        elif t.get("locked") and t["kind"] != "transfer":
+            veto.add(s)
+    remembered = 0
+    for t in pool:
+        if candidate(t) and _HINT.search(t["desc"]):
+            s = sig(t["desc"])
+            if len(s.split()) >= 3 and s not in veto and seen[s] >= 2:   # 签名太短（如 “deposit ach”）不够特定，不记
+                mark.add(t["id"])
+                remembered += 1
+    if remembered:
+        pair()
 
     for tid in mark:
         store.update_transaction(tid, {"kind": "transfer", "category": TRANSFER_CATEGORY})
+    LAST.update(pairs=new_pairs[0], remembered=remembered,
+                pending=sum(1 for t in pool if is_tr(t) and t["id"] not in linked))
     return len(mark) + _refunds() + _propagate()
 
 

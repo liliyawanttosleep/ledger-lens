@@ -20,6 +20,7 @@ from bottle import Bottle, HTTPResponse, request, response, static_file
 
 import analysis
 import store
+import transfers
 from categorize import EXPENSE_CATEGORIES, INCOME_CATEGORIES, TRANSFER_CATEGORY, categorize
 
 PORT = 8756
@@ -67,8 +68,8 @@ def build_payload(lang: str = "zh") -> dict:
         currencies.append({
             "code": code, "symbol": analysis.SYMBOLS.get(code, code + " "), "months": months,
             "analyses": {m: analysis.analyze(rows, m, code, lang) for m in months[-12:]},
-            "txns": [{k: t[k] for k in ("id", "date", "amount", "kind", "category", "desc", "account", "card")}
-                     for t in rows[:3000]],
+            "txns": [{k: t.get(k) for k in ("id", "date", "amount", "kind", "category", "desc", "account", "card", "pair")}
+                     for t in transfers.with_pairs(rows)[:3000]],
         })
     return {
         "app": "ledger-lens", "device": socket.gethostname(),
