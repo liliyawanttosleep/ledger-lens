@@ -49,18 +49,20 @@ _TIME = re.compile(r"(?<!\d)([01]?\d|2[0-3])[:：][0-5]\d(?:[:：][0-5]\d)?(?!\d
 
 _AMOUNT = re.compile(
     r"(?P<paren>\()?\s*(?P<s1>[-+−–﹣－＋])?\s*(?P<cur>[¥￥$€£]|RMB|CNY|USD|HKD)?\s*(?P<s2>[-+−–﹣－＋])?\s*"
-    r"(?<![\d.,:/])(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)(?![\d:/%]|\.\d|,\d)"
+    r"(?<![\d.,:/])(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)(?![\d:/%]|\.\d|,\d|\s*(?:pts\b|points?\b|笔|次|天|个月))"
     r"(?P<post>-(?=\s|$)|\s*(?:\)|CR\b|DR\b|元))?", re.I)
 
 _SKIP_LINE = re.compile(
     r"beginning balance|ending balance|opening balance|closing balance|previous balance|new balance|"
     r"payment due|minimum payment|statement period|credit limit|available credit|total fees|"
     r"total interest|year-to-date|期初余额|期末余额|上期余额|承前|结转|合计|总计|小计|账单周期|本期应还|"
-    r"最低还款|信用额度|可用额度|到期还款日", re.I)
+    r"最低还款|信用额度|可用额度|到期还款日|\bpts\b|\bpoints?\b|addl on|annual percentage|\bapr\b|"
+    r"interest rate|rewards? (?:summary|balance)|积分|年利率", re.I)
 _SEC_INCOME = re.compile(
     r"deposits|additions|other credits|payments and credits|credits\b|money in|存入|收入明细|入账明细", re.I)
 _SEC_EXPENSE = re.compile(
-    r"withdrawals|subtractions|purchases|debits\b|fees\b|checks paid|charges|money out|支出明细|"
+    r"withdrawals|subtractions|purchases?\b|debits\b|fees\b|fees charged|interest charged?|cash advances?|"
+    r"balance transfers?|checks paid|charges|money out|支出明细|"
     r"消费明细", re.I)
 _CREDIT_CARD = re.compile(
     r"信用卡对账单|信用卡账单|信用卡电子账单|贷记卡|最低还款|本期应还|信用额度|minimum payment|credit limit|"
@@ -526,7 +528,8 @@ def _split_line(line, ctx, allow_date_anywhere=False):
     dates = find_dates(line)
     date = None
     spans = []
-    if dates and (allow_date_anywhere or len(line[:dates[0][0]].strip()) <= 26):
+    prefix = line[:dates[0][0]].strip() if dates else ""
+    if dates and (allow_date_anywhere or (len(prefix) <= 26 and not re.fullmatch(r"(?:\d{1,2}\s+){2,}\d{1,2}", prefix))):
         date = ctx.resolve(dates[0])
         spans = [(s, e) for s, e, *_ in dates]
     rest = _strip_spans(line, spans) if spans else line
@@ -538,6 +541,7 @@ def _split_line(line, ctx, allow_date_anywhere=False):
                   " ", desc, flags=re.I)
     desc = re.sub(r"(?<![A-Za-z])\d{6,}(?![A-Za-z])", " ", desc)  # 流水号、卡号
     desc = re.sub(r"(?<![\d/])\d{1,2}/\d{1,2}(?![\d/])", " ", desc)  # 残留的记账日期
+    desc = re.sub(r"(?<!\d)\d{3}-\d{3}-\d{4}(?!\d)", " ", desc)  # 商户电话
     return date, amts, _clean_desc(desc)
 
 
@@ -1020,7 +1024,7 @@ def parse_file(path: str, mode: str = "auto", password: str | None = None) -> di
         warnings.append("来自图片识别，个别数字可能有误，请在确认前核对。")
 
     today = dt.date.today()
-    txns = [t for t in txns if "2000-01-01" <= t["date"] <= (today + dt.timedelta(days=31)).isoformat()]
+    txns = [t for t in txns if "2000-01-01" <= t["date"] <= (today + dt.timedelta(days=1)).isoformat()]
     card = guess_card(full_text, name, credit_card)
     for t in txns:
         t["card"] = t.get("card") or card
