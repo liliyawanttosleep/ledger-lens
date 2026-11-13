@@ -1,0 +1,13 @@
+.venv/
+build/
+dist/
+__pycache__/
+*.pyc
+.claude/
+android/build/
+android/app/build/
+android/.gradle/
+android/local.properties
+*.apk
+# 真实账单绝不要提交
+*.db

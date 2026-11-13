@@ -1,0 +1,10 @@
+pywebview
+pdfplumber
+openpyxl
+xlrd
+pillow
+rapidocr
+onnxruntime
+segno
+pyinstaller
+# 仅生成测试样例时需要：reportlab

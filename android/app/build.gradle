@@ -1,0 +1,42 @@
+plugins {
+    id "com.android.application"
+}
+
+android {
+    namespace "io.github.ledgerlens"
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "io.github.ledgerlens"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "1.0.0"
+    }
+
+    // 手机端界面与电脑端共用一份源码：构建前由 CI 把 app/web/mobile 复制到 build/www
+    sourceSets {
+        main {
+            assets.srcDirs = ["${rootDir}/build/assets"]
+        }
+    }
+
+    buildTypes {
+        debug {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+// 把网页资源复制进 assets/www（本地构建时也能用：gradle assembleDebug）
+tasks.register("copyWeb", Copy) {
+    from("${rootDir}/../app/web/mobile")
+    from("${rootDir}/../app/web/echarts.min.js")
+    into("${rootDir}/build/assets/www")
+}
+preBuild.dependsOn("copyWeb")

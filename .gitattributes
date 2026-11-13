@@ -1,0 +1,8 @@
+* text=auto
+*.pdf binary
+*.png binary
+*.ico binary
+*.csv -text
+*.bat text eol=crlf
+*.gradle text eol=lf
+*.yml text eol=lf
