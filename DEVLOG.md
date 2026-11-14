@@ -1,6 +1,26 @@
 # 开发日志
 
+> English version: [DEVLOG.en.md](DEVLOG.en.md)。两份日志条目一致，每次改动两份都要更新。
+
 新的记录写在最上面。每条包含：做了什么、为什么、涉及文件、怎么验证的、遗留问题。
+
+---
+
+## 2026-11-13 · 项目文件夹迁到 D:\LedgerLens，补英文日志（无代码改动）
+
+**做了什么**
+- 项目文件夹从 `C:\Users\Wentao\Desktop\银行流水分析助手` 迁到 `D:\LedgerLens`，符合用户的全局规范（项目主文件夹放 D 盘，桌面只放快捷方式）。桌面快捷方式 `流水分析助手.lnk` 已改为指向 `D:\LedgerLens\dist\流水分析助手.exe`。
+- 新增 `DEVLOG.en.md`（本日志的英文翻译）。`AGENTS.md` 的规则改为两份日志一起更新，并加了一段英文说明。
+
+**为什么**：用户要求把近期项目统一按 `C:\Users\Wentao\.claude\CLAUDE.md` 里的规范整理：主文件夹在 D 盘、GitHub 保持更新、中英双语开发日志。
+
+**验证**：新位置下 `git status` 干净且与 `origin/main` 一致；`.venv\Scripts\python samples\test_parse.py` 6 份样例通过。
+**没有验证**：没有在新位置重新跑 `build.bat`。
+
+**遗留**
+- `.venv` 是直接复制过来的，没有重建。`.venv\Scripts\python.exe` 可用，但 `.venv\Scripts` 里的启动器（`pip.exe` 等）仍写着旧路径，请用 `python -m pip`，或重建虚拟环境。
+- 用户数据不受影响：数据在 `%APPDATA%\LedgerAssistant`，不在项目文件夹里。
+- 其余同 v1.3.0。
 
 ---
 

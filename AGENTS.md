@@ -1,6 +1,13 @@
 # 给接手开发的 Agent / 开发者
 
-**规则：每一次修改都要同步更新 `DEVLOG.md`（在顶部追加一条），架构有变化时更新本文件。** 动手前先读这两个文件。
+**规则：每一次修改都要同步更新 `DEVLOG.md`（中文）和 `DEVLOG.en.md`（英文），各在顶部追加一条、内容一致；架构有变化时更新本文件。** 动手前先读这三个文件。
+
+> **For English-speaking agents:** this is Ledger Lens (流水分析助手), a Windows desktop app plus an Android app that imports
+> bank statements, screenshots and payslips and analyses monthly income and spending offline. The full history, what was and
+> was not verified, and the open issues are in [DEVLOG.en.md](DEVLOG.en.md). The rule above: every change gets a new entry at
+> the top of **both** `DEVLOG.md` and `DEVLOG.en.md`, and this file is updated when the architecture changes. The project
+> folder is `D:\LedgerLens`; the repository is `liliyawanttosleep/ledger-lens`. The conventions below are written in Chinese
+> and are binding. Source-code UI strings and the category names stored in the database are Chinese by design.
 
 ## 这是什么
 
@@ -62,4 +69,4 @@ dist\流水分析助手.exe --selftest-sync <out.json>           验证打包后
 
 ## 已知问题 / 待办
 
-见 `DEVLOG.md` 最上面一条的“遗留”。
+见 `DEVLOG.md`（英文版 `DEVLOG.en.md`）最上面几条的“遗留”。

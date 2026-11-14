@@ -26,7 +26,7 @@
 - **五种语言**：中文、English、Français、Español、한국어，随时切换。
 - 深色模式、多币种（分币种统计）、导出 Excel 报告。
 
-开发记录见 [DEVLOG.md](DEVLOG.md)，接手开发先读 [AGENTS.md](AGENTS.md)。
+开发记录见 [DEVLOG.md](DEVLOG.md)（[English](DEVLOG.en.md)），接手开发先读 [AGENTS.md](AGENTS.md)。
 
 ## 手机同步怎么用
 
