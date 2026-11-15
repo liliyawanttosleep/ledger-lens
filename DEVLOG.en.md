@@ -30,7 +30,7 @@ Newest entries first. Each entry covers: what was done, why, files touched, how 
 - Desktop: a broadcast to `255.255.255.255:8755` is answered; `/api/pair` returns 200 for the right code and 401 for a wrong one; with another instance holding 8756 the new one falls back to 8757.
 - Phone UI (a fake `LedgerNative` in the browser against a real sync server, simulating the app): code only → discovery → sync succeeds; a wrong code reports "Found the computer, but the pairing code is wrong"; a stale saved address is re-discovered and synced automatically; scan callback and invalid-QR message; no Chinese left in the English UI.
 - Title bar: the real desktop app was launched and screenshotted; title-bar pixels equal the page background in both light and dark themes. The language menu was checked in the dev server.
-- **Not verified**: the broadcast / subnet scan in `Discovery.java` and the QR scanner have **never run on a real device** (only compilation is confirmed — see the CI result in the next entry); the title bar on Windows 10 (expected to stay at the system default); with "AP isolation" on the router both broadcast and scan fail and only the manual address works.
+- **Not verified**: the broadcast / subnet scan in `Discovery.java` and the QR scanner have **never run on a real device** (only compilation is confirmed: Actions run 43751068352 passed, and the published APK contains the scanner library and the `Discovery` class); the title bar on Windows 10 (expected to stay at the system default); with "AP isolation" on the router both broadcast and scan fail and only the manual address works.
 
 **Left to do**
 - Real-device test: QR pairing, discovery by code, automatic reconnection after an IP change.
