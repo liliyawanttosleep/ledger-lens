@@ -6,6 +6,7 @@ import json
 import os
 import random
 import sys
+import time
 import traceback
 
 BASE = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
@@ -133,6 +134,7 @@ class Api:
 
     def set_theme(self, theme):
         store.set_setting("theme", theme)
+        _tint_titlebar(theme)
 
     def set_lang(self, lang):
         store.set_setting("lang", lang if lang in analysis.i18n.LANGS else "zh")
@@ -414,8 +416,55 @@ class Api:
         return {"count": len(txns)}
 
 
+PAGE_BG = {"light": "#f5f4f0", "dark": "#0c0d0f"}   # 与 web/style.css 的 --page 一致
+TITLE_INK = {"light": "#14161a", "dark": "#f1f0ec"}
+
+
+def _tint_titlebar(theme):
+    """把 Windows 的标题栏和窗口边框染成界面背景色（深色主题用深色），让窗口上沿和内容连成一片。
+    用的是 Windows 11 的 DWM 属性；Windows 10 上调用无效但不报错，标题栏保持系统默认。
+    只处理本进程自己的带标题栏的窗口（不能按标题找：可能同时开着另一个实例）。"""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user32, pid, mine = ctypes.windll.user32, os.getpid(), []
+
+        @ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+        def each(h, _):
+            owner = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(h, ctypes.byref(owner))
+            if owner.value == pid and user32.IsWindowVisible(h) and user32.GetWindowLongW(h, -16) & 0x00C00000:  # WS_CAPTION
+                mine.append(h)
+            return True
+
+        user32.EnumWindows(each, 0)
+        theme = "dark" if theme == "dark" else "light"
+
+        def ref(hexrgb):  # #rrggbb → COLORREF 0x00bbggrr
+            v = int(hexrgb[1:], 16)
+            return ctypes.c_int(((v & 0xFF) << 16) | (v & 0xFF00) | (v >> 16))
+
+        set_attr = ctypes.windll.dwmapi.DwmSetWindowAttribute
+        set_attr.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+        for hwnd in mine:
+            for attr, val in ((20, ctypes.c_int(1 if theme == "dark" else 0)),   # DWMWA_USE_IMMERSIVE_DARK_MODE
+                              (35, ref(PAGE_BG[theme])),                         # DWMWA_CAPTION_COLOR
+                              (34, ref(PAGE_BG[theme])),                         # DWMWA_BORDER_COLOR
+                              (36, ref(TITLE_INK[theme]))):                      # DWMWA_TEXT_COLOR
+                set_attr(hwnd, attr, ctypes.byref(val), ctypes.sizeof(val))
+        return len(mine)
+    except Exception:
+        traceback.print_exc()
+
+
 def _bind(win):
-    """把拖进窗口的文件路径交给前端。"""
+    """窗口出现后：标题栏配色；把拖进窗口的文件路径交给前端。"""
+    for _ in range(20):  # 窗口可能还没显示出来，等它出现
+        if _tint_titlebar(store.get_setting("theme", "light")):
+            break
+        time.sleep(0.15)
     try:
         from webview.dom import DOMEventHandler
 
@@ -454,6 +503,13 @@ def main():
             res = {"started": ok, "qr": "<svg" in Api().sync_status()["qr"]}
             for p in ("/api/ping", "/", "/m.js", "/m.css", "/echarts.min.js", "/icon.png"):
                 res[p] = len(urllib.request.urlopen(base + p, timeout=5).read())
+            import socket  # 局域网发现：广播一句，看能不能收到自己的回答；再用配对码验证
+            u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            u.settimeout(3)
+            u.sendto(b"LEDGERLENS?", ("127.0.0.1", sync_server.DISCOVERY_PORT))
+            res["discovery"] = json.loads(u.recvfrom(256)[0].decode("utf-8")).get("port")
+            res["/api/pair"] = json.loads(urllib.request.urlopen(
+                f"{base}/api/pair?t={sync_server.token()}", timeout=5).read().decode("utf-8")).get("ok")
             fresh = fx.refresh()  # 打包后的程序能否联网取汇率（HTTPS 证书是否可用）
             res["fx"] = fresh.get("error") or f'{fresh.get("source")} {fresh.get("date")}'
         except Exception:
@@ -473,7 +529,8 @@ def main():
         sync_server.start(os.path.join(BASE, "web"), _on_push)
     window = webview.create_window(
         APP_NAME, os.path.join(BASE, "web", "index.html"), js_api=Api(),
-        width=1360, height=880, min_size=(1100, 700), background_color="#f9f9f7", text_select=True)
+        width=1360, height=880, min_size=(1100, 700), text_select=True,
+        background_color=PAGE_BG["dark" if store.get_setting("theme", "light") == "dark" else "light"])
     webview.start(_bind, window)
 
 

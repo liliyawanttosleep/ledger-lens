@@ -25,8 +25,9 @@ import transfers
 from categorize import EXPENSE_CATEGORIES, INCOME_CATEGORIES, TRANSFER_CATEGORY, categorize
 
 PORT = 8756
+DISCOVERY_PORT = 8755  # UDP：手机 App 在局域网里广播 “LEDGERLENS?”，电脑回答自己的端口（不含配对码）
 ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # 去掉易混淆的 0/O、1/I/L
-_state = {"server": None, "thread": None, "port": None, "on_push": None, "web": None}
+_state = {"server": None, "thread": None, "port": None, "on_push": None, "web": None, "udp": None}
 _fails = {}  # ip -> [次数, 解锁时间]
 
 
@@ -151,6 +152,12 @@ def _make_app(web_dir: str) -> Bottle:
     def ping():
         return js({"app": "ledger-lens", "device": socket.gethostname()})
 
+    @app.get("/api/pair")
+    def pair():
+        """手机 App 找到电脑后用它验证配对码（只回电脑名，不回数据）。"""
+        auth()
+        return js({"app": "ledger-lens", "device": socket.gethostname(), "ok": True})
+
     @app.get("/api/sync")
     def sync():
         auth()
@@ -190,7 +197,8 @@ class _Quiet(WSGIRequestHandler):
 
 class _Server(ThreadingMixIn, WSGIServer):
     daemon_threads = True
-    allow_reuse_address = True
+    # Windows: SO_REUSEADDR lets two programs listen on one port (requests then go to the wrong one), so keep it off there
+    allow_reuse_address = os.name != "nt"
 
 
 def start(web_dir: str, on_push=None) -> bool:
@@ -206,8 +214,37 @@ def start(web_dir: str, on_push=None) -> bool:
         th = threading.Thread(target=srv.serve_forever, daemon=True)
         th.start()
         _state.update(server=srv, thread=th, port=port)
+        _start_discovery()
         return True
     return False
+
+
+def _start_discovery():
+    """局域网发现：让手机 App 只凭配对码就能找到这台电脑，不用手填地址。
+    只回答 “我在哪个端口”，配对码仍要通过 /api/pair 验证。端口被占用就算了，App 还会逐个地址扫描。"""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        if os.name != "nt":
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("0.0.0.0", DISCOVERY_PORT))
+    except OSError:
+        return
+    _state["udp"] = sock
+
+    def loop():
+        while True:
+            try:
+                data, addr = sock.recvfrom(256)
+            except OSError:
+                return  # 套接字被 stop() 关掉了
+            if data.strip().startswith(b"LEDGERLENS?") and _state["port"]:
+                try:
+                    sock.sendto(json.dumps({"app": "ledger-lens", "port": _state["port"],
+                                            "device": socket.gethostname()}).encode("utf-8"), addr)
+                except OSError:
+                    pass
+
+    threading.Thread(target=loop, daemon=True).start()
 
 
 def stop():
@@ -215,7 +252,9 @@ def stop():
     if srv:
         srv.shutdown()
         srv.server_close()
-        _state.update(server=None, thread=None, port=None)
+        if _state["udp"]:
+            _state["udp"].close()
+        _state.update(server=None, thread=None, port=None, udp=None)
 
 
 def status() -> dict:

@@ -1,6 +1,7 @@
 /* 流水分析助手 · 手机端。同一份代码：① 由电脑端直接提供给手机浏览器 ② 打进安卓 App（离线可看上次同步的数据）。 */
 'use strict';
 const IN_APP = location.protocol === 'file:';
+const NATIVE = window.LedgerNative || null;   // 安卓 App 提供：discover(配对码) 在局域网里找电脑、scan() 扫二维码
 const LS = {
   get(k, d) { try { const v = localStorage.getItem('ll_' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem('ll_' + k, JSON.stringify(v)); } catch (e) { /* 存储满了也不影响使用 */ } },
@@ -35,7 +36,25 @@ async function call(path, opt = {}) {
   } finally { clearTimeout(timer); }
 }
 function setStatus(cls, text) { const s = $('#status'); s.className = cls; s.innerHTML = `<i></i>${esc(text)}`; }
-async function sync(manual) {
+let finding = null, lastFind = 0;
+function findPc(token, manual) { // 只凭配对码在局域网里找电脑（结果回到 window.onDiscover）
+  if (!NATIVE || finding || !token) return false;
+  if (!manual && Date.now() - lastFind < 60000) return false;
+  finding = { token, manual }; lastFind = Date.now();
+  setStatus('busy', '正在寻找电脑…'); if (manual) toast('正在同一 Wi-Fi 下寻找电脑，最多十几秒');
+  NATIVE.discover(token); return true;
+}
+window.onDiscover = (host, err) => {
+  const f = finding; finding = null; if (!f) return;
+  if (host) { S.cfg = { host: normHost(host), token: f.token }; LS.set('cfg', S.cfg); if (f.manual) toast('已找到电脑，正在同步'); sync(f.manual, true); return; }
+  const msg = err === 'code' ? '找到了电脑，但配对码不对' : err === 'locked' ? '尝试次数过多，请 5 分钟后再试' : '没找到电脑：确认手机和电脑连同一个 Wi-Fi，且电脑端已开启手机同步';
+  setStatus('off', S.data ? `${err === 'none' || !err ? '连不上电脑' : msg} · 显示 ${S.data.synced_at.slice(5)} 的数据` : msg);
+  if (f.manual) toast(msg); if (S.tab === 'sync') render();
+};
+window.onPairNative = (host, token) => { S.cfg = { host: normHost(host), token: String(token).toUpperCase() }; LS.set('cfg', S.cfg); toast('已配对，正在同步'); sync(true); };
+window.onScanFail = () => toast('这不是流水分析助手的配对二维码');
+async function sync(manual, noFind) {
+  if (S.cfg && !S.cfg.host && S.cfg.token && IN_APP && findPc(S.cfg.token, manual)) return false;
   if (!S.cfg || !S.cfg.host) { setStatus('off', '尚未连接电脑'); return false; }
   setStatus('busy', '正在同步…');
   try {
@@ -48,6 +67,7 @@ async function sync(manual) {
     if (manual) toast('同步完成'); render(); return true;
   } catch (e) {
     S.online = false;
+    if (!e.status && !noFind && IN_APP && !S.cfg.manual && findPc(S.cfg.token, manual)) return false;  // 电脑换了地址：凭配对码重新找
     const why = e.status === 401 || e.status === 429 ? e.message : '连不上电脑';
     setStatus('off', S.data ? `${why} · 显示 ${S.data.synced_at.slice(5)} 的数据` : why);
     if (manual) toast(e.status ? e.message : '连不上电脑：确认同一 Wi-Fi，且电脑端已开启手机同步');
@@ -181,19 +201,29 @@ function pSync() {
       <div class="kv"><span>上次同步</span><b class="num">${esc(S.data ? S.data.synced_at : '从未')}</b></div>
       <div class="kv"><span>待同步的记账</span><b class="num">${S.pending.length} 笔</b></div>
       <button class="btn primary" id="syncNow" style="margin-top:12px">${icon('sync')}立即同步</button></div>
-    <div class="card"><h3>电脑地址与配对码</h3><div class="form">
-      <label>电脑地址<input class="input" id="host" inputmode="url" autocapitalize="off" placeholder="例如 192.168.1.8:8756" value="${esc((c.host || '').replace(/^https?:\/\//, ''))}"></label>
-      <label>配对码<input class="input" id="tok" autocapitalize="characters" maxlength="8" placeholder="电脑端“手机同步”页上的 8 位码" value="${esc(c.token || '')}" style="letter-spacing:.14em"></label>
-      <button class="btn" id="saveCfg">保存并连接</button></div></div>
+    <div class="card"><h3>配对电脑</h3>
+      ${NATIVE ? `<button class="btn primary" id="scanBtn" style="width:100%">${icon('sync')}扫电脑上的二维码</button><p class="muted pair-or">或者输入配对码</p>` : ''}
+      <div class="form">
+      <label>配对码<input class="input" id="tok" autocapitalize="characters" autocomplete="off" maxlength="8" placeholder="电脑端“手机同步”页上的 8 位码" value="${esc(c.token || '')}" style="letter-spacing:.14em"></label>
+      <button class="btn" id="saveCfg">连接</button>
+      ${IN_APP ? `<details class="pair-adv"${NATIVE && !c.manual ? '' : ' open'}><summary>找不到电脑？手动填写电脑地址</summary><label>电脑地址<input class="input" id="host" inputmode="url" autocapitalize="off" placeholder="例如 192.168.1.8:8756" value="${esc(c.manual || !NATIVE ? (c.host || '').replace(/^https?:\/\//, '') : '')}"></label></details>` : ''}
+      </div></div>
     ${web && deep ? `<div class="card"><h3>安卓 App</h3><p class="muted" style="font-size:13.5px;margin-bottom:12px">装了 App 的话，点下面的按钮把这台电脑的配对信息带进 App。App 会保存数据，离开电脑也能查看。</p><a class="btn" href="${deep}" style="text-decoration:none;color:inherit">在 App 中打开</a></div>` : ''}
-    <div class="card"><h3>语言</h3><select class="select" id="mLang">${I18N.LANGS.map(([c, n]) => `<option value="${c}"${c === I18N.lang ? ' selected' : ''}>${n}</option>`).join('')}</select></div>
-    <div class="card help"><p><b>怎么连？</b>电脑上打开“流水分析助手 → 手机同步 → 开启”，手机和电脑连同一个 Wi-Fi，${IN_APP ? '填入页面上显示的地址和配对码。' : '用相机扫二维码即可。'}</p>
+    <div class="card"><h3>语言</h3><div class="lang-chips">${I18N.LANGS.map(([c, n]) => `<button data-lang="${c}" class="${c === I18N.lang ? 'on' : ''}" data-raw>${n}</button>`).join('')}</div></div>
+    <div class="card help"><p><b>怎么连？</b>电脑上打开“流水分析助手 → 手机同步 → 开启”，手机和电脑连同一个 Wi-Fi，${IN_APP ? (NATIVE ? '在 App 里扫电脑上的二维码，或只输入 8 位配对码即可，不用填电脑地址。' : '填入页面上显示的地址和配对码。') : '用相机扫二维码即可。'}</p>
       <p><b>离开电脑还能用吗？</b>${IN_APP ? '能。App 显示上次同步的数据；在外面记的账会先存在手机里，回到同一 Wi-Fi 后自动传回电脑。' : '浏览器版需要连着电脑才能打开；想离线查看请安装安卓 App。'}</p>
       <p><b>数据安全</b>数据只在你的手机和电脑之间通过家里的局域网传输，不经过任何服务器。</p></div>`,
     draw() {
       $('#syncNow').onclick = () => sync(true);
-      $('#mLang').onchange = e => { LS.set('lang', e.target.value); location.reload(); };
-      $('#saveCfg').onclick = () => { const h = normHost($('#host').value), t = $('#tok').value.trim().toUpperCase(); if (!h || !t) return toast('请填写地址和配对码'); S.cfg = { host: h, token: t }; LS.set('cfg', S.cfg); sync(true); };
+      $$('.lang-chips button').forEach(b => b.onclick = () => { if (b.dataset.lang !== I18N.lang) { LS.set('lang', b.dataset.lang); location.reload(); } });
+      if ($('#scanBtn')) $('#scanBtn').onclick = () => NATIVE.scan();
+      $('#saveCfg').onclick = () => {
+        const t = $('#tok').value.trim().toUpperCase(), h = IN_APP ? normHost($('#host').value) : location.origin;
+        if (!t) return toast('请填写配对码');
+        if (h) { S.cfg = { host: h, token: t, ...(IN_APP ? { manual: true } : {}) }; LS.set('cfg', S.cfg); return sync(true); }
+        if (!NATIVE) return toast('请填写电脑地址');
+        S.cfg = { host: '', token: t }; LS.set('cfg', S.cfg); lastFind = 0; findPc(t, true);   // 不用地址：凭配对码自动找
+      };
     } };
 }
 function pEmpty() {
@@ -254,7 +284,10 @@ function render() {
   const el = $('#content'), keep = S.tab === render.last ? el.scrollTop : 0; render.last = S.tab;
   const curs = S.data ? S.data.currencies : [];   // 多种货币：分开看，或看按汇率折算后的合并
   const curBar = S.tab !== 'sync' && a && curs.length > 1 ? `<div class="seg cur-seg" style="grid-template-columns:repeat(${curs.length},1fr)">${curs.map(x => `<button data-cur="${x.code}" class="${x.code === c.code ? 'on' : ''}">${x.merged ? '合并' : x.code}</button>`).join('')}</div>${c.merged ? `<p class="muted cur-note">全部货币按当前参考汇率折算为 <span data-raw>${c.base}</span></p>` : ''}` : '';
-  el.innerHTML = curBar + p.html; el.scrollTop = keep; p.draw();
+  const dl = !IN_APP && /Android/i.test(navigator.userAgent) && S.cfg && S.cfg.token && !sessionStorage.getItem('ll_noapp') ? `ledgerlens://pair?h=${encodeURIComponent(S.cfg.host)}&t=${encodeURIComponent(S.cfg.token)}` : '';
+  const appBar = dl && S.tab !== 'sync' ? `<div class="card app-bar"><span>装了安卓 App？配对信息可以直接带过去</span><a class="btn primary" href="${dl}">在 App 中打开</a><button class="x" id="appBarX" aria-label="关闭">×</button></div>` : '';
+  el.innerHTML = appBar + curBar + p.html; el.scrollTop = keep; p.draw();
+  if ($('#appBarX')) $('#appBarX').onclick = () => { sessionStorage.setItem('ll_noapp', '1'); render(); };
   $$('[data-cur]', el).forEach(e => e.onclick = () => { S.cur = e.dataset.cur; LS.set('cur', S.cur); pick(); render(); });
   $$('[data-go]', el).forEach(e => e.onclick = () => { S.tab = e.dataset.go; render(); });
   $$('[data-drill]', el).forEach(e => e.onclick = () => openDrill(JSON.parse(e.dataset.drill)));

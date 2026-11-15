@@ -438,19 +438,19 @@ async function pageSync() {
     <div class="card sync-qr">
       <div class="qr ${on ? '' : 'off'}">${st.qr}${on ? '' : '<div><b>同步未开启</b><span>开启后才能扫码</span></div>'}</div>
       <button class="btn ${on ? '' : 'primary'}" id="syncToggle" style="width:100%;justify-content:center">${on ? '关闭手机同步' : '开启手机同步'}</button>
-      <p class="sync-tip">${on ? '手机与这台电脑连同一个 Wi-Fi，用相机扫一扫' : '关闭时，局域网内的任何设备都无法访问你的数据'}</p>
+      <p class="sync-tip">${on ? '手机与这台电脑连同一个 Wi-Fi，用 App 或相机扫一扫' : '关闭时，局域网内的任何设备都无法访问你的数据'}</p>
     </div>
     <div class="card">
       <div class="card-h"><h3>连接信息</h3><span>${on ? '<span class="pill good">' + icon('check') + '同步服务运行中</span>' : '<span class="pill info">' + icon('info') + '未开启</span>'}</span></div>
       <table class="tbl"><tbody>
-        <tr><td class="muted" style="width:110px">电脑地址</td><td class="num" style="user-select:text"><b>${on ? esc(st.base) : '—'}</b></td></tr>
-        <tr><td class="muted">配对码</td><td><b class="code">${esc(st.token)}</b> <button class="btn sm" id="syncReset" style="margin-left:10px">更换</button></td></tr>
+        <tr><td class="muted" style="width:110px">配对码</td><td><b class="code">${esc(st.token)}</b> <button class="btn sm" id="syncReset" style="margin-left:10px">更换</button></td></tr>
+        <tr><td class="muted">电脑地址</td><td class="num" style="user-select:text">${on ? esc(st.base) : '—'} <span class="muted" style="font-size:12.5px;margin-left:8px">一般用不到，App 会自动找到这台电脑</span></td></tr>
         <tr><td class="muted">这台电脑</td><td>${esc(st.device)}</td></tr>
       </tbody></table>
       <div class="card-h" style="margin-top:22px"><h3>三种用法</h3></div>
       <ol class="steps">
         <li><b>扫码即用（任何手机）</b>相机扫左侧二维码，在浏览器里直接打开手机版，可“添加到主屏幕”。</li>
-        <li><b>安卓 App</b><a id="repoLink">${esc(st.repo)}/releases</a> 下载 APK 安装；扫码后点“在 App 中打开”，或在 App 里手动填上面的地址和配对码。App 会保存上次同步的数据，离开电脑也能看。</li>
+        <li><b>安卓 App</b><a id="repoLink">${esc(st.repo)}/releases</a> 下载 APK 安装。打开 App 点“扫电脑上的二维码”，或只输入上面的 8 位配对码，App 会在同一 Wi-Fi 下自动找到这台电脑，不用填地址。App 会保存上次同步的数据，离开电脑也能看。</li>
         <li><b>手机记账</b>在手机上记的每一笔，下次连上同一 Wi-Fi 时自动传回电脑并计入分析。</li>
       </ol>
       <p class="sync-tip" style="text-align:left;margin-top:12px">首次开启时 Windows 防火墙可能弹窗询问，请勾选“专用网络”并允许。配对码相当于密码，不要发给别人；怀疑泄露就点“更换”。</p>
@@ -616,8 +616,14 @@ function setTheme(t) {
 async function init() {
   S.boot = await api.bootstrap(); setTheme(S.boot.theme);
   I18N.set(S.boot.lang || 'zh');
-  $('#langSel').innerHTML = I18N.LANGS.map(([c, n]) => `<option value="${c}"${c === I18N.lang ? ' selected' : ''}>${n}</option>`).join('');
-  $('#langSel').onchange = async e => { await api.set_lang(e.target.value); location.reload(); };  // 重新载入，保证所有文字都按新语言生成
+  // 语言菜单（自绘，不用系统下拉框）。切换后重新载入，保证所有文字都按新语言生成
+  $('#langCur').textContent = (I18N.LANGS.find(([c]) => c === I18N.lang) || I18N.LANGS[0])[1];
+  $('#langMenu').innerHTML = I18N.LANGS.map(([c, n]) => `<button role="option" data-lang="${c}" class="${c === I18N.lang ? 'on' : ''}"><span data-raw>${n}</span>${icon('check')}</button>`).join('');
+  const langOpen = on => { $('#langMenu').hidden = !on; $('#langPick').classList.toggle('open', on); };
+  $('#langBtn').onclick = e => { e.stopPropagation(); langOpen($('#langMenu').hidden); };
+  document.addEventListener('click', () => langOpen(false));
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') langOpen(false); });
+  $$('#langMenu button').forEach(b => b.onclick = async () => { if (b.dataset.lang === I18N.lang) return langOpen(false); await api.set_lang(b.dataset.lang); location.reload(); });
   I18N.walk(document.body);
   if (DEV) { // 调试参数：?dev=1&page=advice&theme=dark&noanim=1
     const q = new URLSearchParams(location.search);

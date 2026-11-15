@@ -6,6 +6,40 @@
 
 ---
 
+## 2026-11-15 · v1.4.0 — 只凭配对码配对、App 内扫码、标题栏融入背景、语言菜单重做
+
+**做了什么**
+
+1. **手机 App 配对不再需要电脑地址**
+   - 电脑端（`sync_server.py`）：开启同步时多开一个 UDP 应答（端口 `8755`）。手机广播 `LEDGERLENS?`，电脑只回答自己的 HTTP 端口和电脑名，**不含配对码**。新增 `GET /api/pair`（需配对码，只回电脑名）供 App 验证。
+   - 安卓端（新文件 `Discovery.java`）：先 UDP 广播（约 2 秒）；没有回应时逐个扫描本网段 `x.x.x.1~254` 的 `8756~8758` 端口并用 `/api/ping` 确认是流水分析助手；再对找到的每台电脑用配对码请求 `/api/pair`，通过的那台即目标。配对码只发给已确认运行本程序的地址。
+   - 网页与原生的桥（`MainActivity.java` 的 `LedgerNative`）：`discover(配对码)` → 回调 `window.onDiscover(地址, 错误)`；`scan()` 打开相机扫二维码 → 回调 `window.onPairNative(地址, 配对码)` / `window.onScanFail()`。扫码用 `com.journeyapps:zxing-android-embedded:4.3.0`。
+   - 手机界面（`m.js` 同步页）：卡片改为“扫电脑上的二维码”按钮 + 配对码输入框 + “连接”；电脑地址收进折叠的“找不到电脑？手动填写”。**电脑换了 IP 时自动重新找**：同步连不上（网络错误而非配对码错误）且不是手动填的地址时，凭已保存的配对码再发现一次（60 秒内最多一次）。
+   - 浏览器版在安卓手机上顶部多一条“在 App 中打开”（原来藏在同步页里）。系统相机扫码只能打开浏览器——局域网地址做不了安卓的“扫码直达 App”（App Links 需要已验证的 https 域名），所以直达 App 的入口是 App 内的扫码按钮。
+   - 二维码内容不变（`http://电脑地址:端口/?t=配对码`），浏览器和 App 扫码器通用。
+2. **修复：Windows 上两个实例会同时监听同一端口**。`_Server.allow_reuse_address = True` 在 Windows 上等于允许重复绑定，端口回退（8756→8757…）从不触发，手机的请求可能落到另一个实例上。Windows 下改为不复用；UDP 同理。
+3. **标题栏融入背景**（`main.py::_tint_titlebar`）：用 Windows 11 的 DWM 属性把系统标题栏和窗口边框染成界面背景色（浅色 `#f5f4f0` / 深色 `#0c0d0f`），切换主题时同步；窗口初始背景色也跟随主题。侧栏底色改为与页面相同（原来略浅），上沿、侧栏、内容区连成一片。
+4. **语言选择重做**：电脑端不再用系统下拉框，改为自绘的圆角弹出菜单（当前项打勾，点外面或按 Esc 关闭）；手机端改为一排圆角选项。普通下拉框（`.select`）去掉系统外观，改细边框和自绘箭头。
+5. `--selftest-sync` 增加 `discovery`（UDP 应答）和 `/api/pair` 两项。安卓 `versionCode 2 / versionName 1.4.0`。
+
+**为什么**：用户要求配对只靠扫码或一串配对码，不要填电脑地址；并反馈窗口顶部的白色标题栏和语言下拉框与整体风格不协调。
+
+**涉及文件**：`app/sync_server.py` `app/main.py` `app/web/index.html` `app/web/app.js` `app/web/style.css` `app/web/mobile/m.js` `app/web/mobile/m.css` `app/web/mobile/i18n.js` `android/app/src/main/java/io/github/ledgerlens/Discovery.java`（新）`MainActivity.java` `android/app/build.gradle` `AndroidManifest.xml` `res/values/strings.xml`
+
+**验证**
+- 电脑端：向 `255.255.255.255:8755` 广播能收到应答；`/api/pair` 正确码 200、错误码 401；已有实例占着 8756 时新实例回退到 8757。
+- 手机界面（浏览器里用假的 `LedgerNative` + 真的同步服务模拟 App）：只填配对码 → 发现 → 同步成功；错误配对码提示“找到了电脑，但配对码不对”；保存的地址失效后自动重新发现并同步；扫码回调、无效二维码提示；英文界面无残留中文。
+- 标题栏：实际启动桌面程序截图取色，浅色、深色下标题栏像素与页面背景完全一致。语言菜单在调试服务里截图看过。
+- **没有验证**：`Discovery.java` 的广播 / 网段扫描和扫码**没有在真机上运行过**（只确认能编译，见下一条 CI 结果）；Windows 10 上的标题栏（预期保持系统默认）；路由器开了“AP 隔离”时广播和扫描都会失败，只能手动填地址。
+
+**遗留**
+- 真机测试：扫码配对、凭配对码发现、换 IP 后自动重连。
+- UDP 发现需要 Windows 防火墙放行本程序（首次开启同步时的系统弹窗）；被拦时 App 会退回网段扫描（走 TCP，同样需要放行）。
+- 开发时窗口图标是 Python 的（打包后的 exe 用自己的图标）。
+- 其余同 v1.3.0。
+
+---
+
 ## 2026-11-13 · 项目文件夹迁到 D:\LedgerLens，补英文日志（无代码改动）
 
 **做了什么**

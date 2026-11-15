@@ -56,7 +56,10 @@
       <button data-page="imports"><svg><use href="#i-inbox"/></svg>导入与数据</button>
     </nav>
     <div class="side-foot">
-      <label class="lang-pick"><svg><use href="#i-globe"/></svg><select id="langSel" title="语言 / Language"></select></label>
+      <div class="lang-pick" id="langPick">
+        <button class="ghost-btn" id="langBtn" title="语言 / Language" aria-haspopup="listbox"><svg><use href="#i-globe"/></svg><span id="langCur" data-raw></span><i class="caret"></i></button>
+        <div class="lang-menu" id="langMenu" role="listbox" hidden></div>
+      </div>
       <button id="themeBtn" class="ghost-btn"><svg><use href="#i-moon"/></svg><span>深色模式</span></button>
       <p>数据仅保存在本机</p>
     </div>

@@ -25,11 +25,11 @@ app/
   analysis.py      月度分析 + 建议引擎（输出给界面的唯一数据结构）
   i18n.py          后端文案模板（分类名、健康分、建议），5 种语言
   store.py         SQLite（%APPDATA%\LedgerAssistant\data.db），含字段迁移
-  sync_server.py   局域网同步服务（配对码鉴权），同时给手机浏览器提供 web/mobile
+  sync_server.py   局域网同步服务（配对码鉴权；UDP 8755 应答手机的发现广播），同时给手机浏览器提供 web/mobile
   dev_server.py    仅开发用：浏览器里调试界面（?dev=1），不进安装包
   web/             电脑端界面：index.html / style.css / app.js / echarts.min.js
   web/mobile/      手机端界面（浏览器与安卓 App 共用）：index.html / m.css / m.js / i18n.js
-android/           安卓 WebView 壳工程；构建时把 web/mobile 拷进 assets
+android/           安卓 WebView 壳工程；构建时把 web/mobile 拷进 assets。原生桥 LedgerNative：discover（凭配对码找电脑）、scan（扫码）
 samples/           脚本生成的虚构账单 + test_parse.py
 assets/            图标与生成脚本
 ```
@@ -50,6 +50,9 @@ assets/            图标与生成脚本
   折算后的记录带 `orig_amount / orig_currency`，编辑时必须用原币金额。汇率用“当前参考汇率”，不是交易当日汇率。
 - **内部转账分两档**：高把握的在 `transfers.reclassify()` 里自动标；拿不准的只进 `transfers.suggestions()` 让用户确认，
   用户的决定存在设置项 `transfer_routes`（描述签名 → self / other）。不要把打分规则直接改成自动标记。
+- **手机配对只需要配对码**：UDP 发现的应答里不能带配对码；配对码只通过 `/api/pair`、`/api/sync`、`/api/push` 校验。
+  二维码内容固定为 `http://地址:端口/?t=配对码`（浏览器与 App 扫码器共用），不要改格式。
+- **窗口标题栏颜色**由 `main._tint_titlebar` 设置，色值 `PAGE_BG` 必须与 `web/style.css` 的 `--page` 保持一致。
 - **用户手动改过类型的交易会被锁定**（`locked=1`），`transfers.reclassify()` 不再改它。
 - **隐私**：`samples/` 只能放虚构数据；真实账单、数据库、用户姓名不得进仓库。提交用 GitHub noreply 邮箱。
 - 表结构变化要在 `store.init()` 里做 `ALTER TABLE` 迁移，不能假设是新库。

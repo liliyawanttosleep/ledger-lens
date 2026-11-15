@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">流水分析助手</string>
+    <string name="scan_prompt">对准电脑上“手机同步”页的二维码</string>
 </resources>

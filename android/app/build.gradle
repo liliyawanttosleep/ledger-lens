@@ -10,8 +10,8 @@ android {
         applicationId "io.github.ledgerlens"
         minSdk 24
         targetSdk 34
-        versionCode 1
-        versionName "1.0.0"
+        versionCode 2
+        versionName "1.4.0"
     }
 
     // 手机端界面与电脑端共用一份源码：构建前由 CI 把 app/web/mobile 复制到 build/www
@@ -31,6 +31,11 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+}
+
+dependencies {
+    // App 内扫电脑上的配对二维码
+    implementation "com.journeyapps:zxing-android-embedded:4.3.0"
 }
 
 // 把网页资源复制进 assets/www（本地构建时也能用：gradle assembleDebug）

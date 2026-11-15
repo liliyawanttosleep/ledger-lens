@@ -6,6 +6,40 @@ Newest entries first. Each entry covers: what was done, why, files touched, how 
 
 ---
 
+## 2026-11-15 · v1.4.0 — pairing with the code alone, in-app QR scan, title bar blended into the background, new language menu
+
+**What was done**
+
+1. **Pairing the phone app no longer needs the computer's address**
+   - Desktop (`sync_server.py`): when sync is on, a UDP responder also listens on port `8755`. The phone broadcasts `LEDGERLENS?`; the computer answers with its HTTP port and device name only — **never the pairing code**. New `GET /api/pair` (requires the code, returns only the device name) lets the app verify a code.
+   - Android (new `Discovery.java`): UDP broadcast first (about 2 s); with no answer it scans `x.x.x.1–254` of the phone's subnet on ports `8756–8758` and confirms each hit with `/api/ping`; then it calls `/api/pair` with the code on every computer found and keeps the one that accepts. The code is only ever sent to addresses confirmed to run Ledger Lens.
+   - Web ↔ native bridge (`LedgerNative` in `MainActivity.java`): `discover(code)` → callback `window.onDiscover(host, error)`; `scan()` opens the camera → `window.onPairNative(host, code)` / `window.onScanFail()`. Scanning uses `com.journeyapps:zxing-android-embedded:4.3.0`.
+   - Phone UI (sync tab in `m.js`): the card is now a "Scan the QR code on the computer" button, a pairing-code field and "Connect"; the address field is folded into "Can't find the computer? Enter its address manually". **When the computer's IP changes the app finds it again**: if a sync fails with a network error (not a wrong code) and the address was not typed by hand, it re-runs discovery with the saved code (at most once per 60 s).
+   - The browser version on Android phones shows an "Open in app" bar at the top (it used to be buried in the sync tab). The system camera can only open the browser: a LAN address cannot be an Android App Link (those need a verified https domain), so the direct route into the app is the in-app scan button.
+   - The QR content is unchanged (`http://host:port/?t=code`) and works for both browsers and the in-app scanner.
+2. **Fix: two instances could listen on the same port on Windows.** `_Server.allow_reuse_address = True` means "allow duplicate binds" on Windows, so the port fallback (8756→8757…) never triggered and phone requests could reach the other instance. Reuse is now off on Windows, for UDP too.
+3. **Title bar blended into the background** (`main.py::_tint_titlebar`): Windows 11 DWM attributes colour the system title bar and window border with the page background (light `#f5f4f0` / dark `#0c0d0f`), updated when the theme changes; the window's initial background follows the theme as well. The sidebar now uses the page colour (it was slightly lighter), so the top edge, sidebar and content read as one surface.
+4. **Language picker redone**: the desktop no longer uses the system drop-down but a custom rounded pop-up menu (tick on the current item, closes on outside click or Esc); the phone uses a row of rounded chips. Ordinary drop-downs (`.select`) lose the system look in favour of a thin border and a drawn arrow.
+5. `--selftest-sync` gains `discovery` (UDP answer) and `/api/pair`. Android `versionCode 2 / versionName 1.4.0`.
+
+**Why**: the owner asked for pairing by scanning or by a code alone, without typing the computer's address, and found the white title bar and the language drop-down out of keeping with the rest of the design.
+
+**Files touched**: `app/sync_server.py` `app/main.py` `app/web/index.html` `app/web/app.js` `app/web/style.css` `app/web/mobile/m.js` `app/web/mobile/m.css` `app/web/mobile/i18n.js` `android/app/src/main/java/io/github/ledgerlens/Discovery.java` (new) `MainActivity.java` `android/app/build.gradle` `AndroidManifest.xml` `res/values/strings.xml`
+
+**Verified**
+- Desktop: a broadcast to `255.255.255.255:8755` is answered; `/api/pair` returns 200 for the right code and 401 for a wrong one; with another instance holding 8756 the new one falls back to 8757.
+- Phone UI (a fake `LedgerNative` in the browser against a real sync server, simulating the app): code only → discovery → sync succeeds; a wrong code reports "Found the computer, but the pairing code is wrong"; a stale saved address is re-discovered and synced automatically; scan callback and invalid-QR message; no Chinese left in the English UI.
+- Title bar: the real desktop app was launched and screenshotted; title-bar pixels equal the page background in both light and dark themes. The language menu was checked in the dev server.
+- **Not verified**: the broadcast / subnet scan in `Discovery.java` and the QR scanner have **never run on a real device** (only compilation is confirmed — see the CI result in the next entry); the title bar on Windows 10 (expected to stay at the system default); with "AP isolation" on the router both broadcast and scan fail and only the manual address works.
+
+**Left to do**
+- Real-device test: QR pairing, discovery by code, automatic reconnection after an IP change.
+- UDP discovery needs Windows Firewall to allow the program (the system prompt on first enabling sync); if blocked, the app falls back to the subnet scan (TCP, which needs the same permission).
+- In development the window icon is Python's (the packaged exe has its own).
+- Otherwise as v1.3.0.
+
+---
+
 ## 2026-11-13 · Project folder moved to D:\LedgerLens, English log added (no code changes)
 
 **What was done**
